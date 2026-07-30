@@ -1,3 +1,7 @@
+* {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   background: #f5f5f5;
@@ -42,6 +46,22 @@ button {
   background: #111;
   color: white;
   cursor: pointer;
+}
+
+button:hover {
+  background: #333;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid #8ab4f8;
+  outline-offset: 2px;
 }
 
 .grid {
@@ -91,6 +111,72 @@ textarea {
   padding: 4px 8px;
   font-size: 12px;
 }
+
+.structureEditorToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.structureEditorToolbar .desc {
+  margin: 0;
+}
+
+.structureEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 680px;
+  margin-top: 12px;
+  overflow: auto;
+}
+
+.structureEditorRow {
+  display: grid;
+  grid-template-columns: 44px minmax(180px, 220px) 1fr;
+  align-items: start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 12px;
+}
+
+.structureEditorRow.isOverridden {
+  border-color: #7aa7ff;
+  background: #f5f8ff;
+}
+
+.structureLineNumber {
+  padding-top: 9px;
+  color: #888;
+  font-size: 12px;
+  text-align: right;
+}
+
+.structureTypeSelect {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #ccc;
+  border-radius: 9px;
+  background: #fff;
+  color: #111;
+}
+
+.structureFinalType {
+  display: block;
+  margin-top: 6px;
+  color: #5470a8;
+  font-size: 12px;
+}
+
+.structureEditorRow p {
+  margin: 7px 0 0;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 /* ===== 论文排版样式升级 ===== */
 
 .preview {
@@ -139,4 +225,46 @@ textarea {
 .preview br {
   display: block;
   margin: 10px 0;
+}
+
+@media (max-width: 900px) {
+  .page {
+    padding: 18px;
+  }
+
+  .header {
+    flex-direction: column;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+  }
+
+  .grid,
+  .top-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .structure {
+    grid-template-columns: 1fr;
+  }
+
+  .structureEditorToolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .structureEditorRow {
+    grid-template-columns: 36px 1fr;
+  }
+
+  .structureEditorRow p {
+    grid-column: 2;
+    margin-top: 0;
+  }
+
+  textarea,
+  .preview {
+    height: 420px;
+  }
 }

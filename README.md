@@ -1,16 +1,70 @@
-# React + Vite
+# 论文格式清洗器
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+一个完全在浏览器中运行的论文结构识别与 Word 导出工具。用户可以粘贴文本，或导入 TXT、DOCX、PDF 内容；系统会识别封面信息、摘要、关键词、标题层级、表格、公式和参考文献，并生成可继续编辑的 DOCX。
 
-Currently, two official plugins are available:
+## 当前能力
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 中文论文、英文论文和普通文档模式
+- TXT、DOCX、PDF 内容导入
+- 标题、摘要、关键词、图表题注、简单 Markdown 表格及参考文献识别
+- 逐行人工修正标题层级和段落类型，支持忽略误识别内容
+- 导出前结构与质量检查
+- HTML 和 DOCX 导出
+- Word 内建 Heading 1–3 样式、自动目录字段及正文页码
+- 本地保存编辑内容、格式设置和人工结构修正
+- 文件在浏览器中处理，不上传到服务器
 
-## React Compiler
+## 格式模板说明
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+当前内置浙江工商大学格式预设。上传的 DOCX/PDF 仅作为“格式说明文件”读取：应用文件正文中明确写出的学校、字体、字号、行距和首行缩进规则。
 
-## Expanding the ESLint configuration
+本项目不会声称从任意 DOCX 或 PDF 中准确恢复其内部视觉样式。若要支持真正的 DOCX 模板解析，需要进一步读取 `word/styles.xml`、`word/numbering.xml`、节属性和页眉页脚等 Open XML 内容。
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## 本地运行
+
+需要 Node.js 20 或更高版本。
+
+```bash
+npm install
+npm run dev
+```
+
+质量检查：
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
+## 使用步骤
+
+1. 粘贴论文文本，或导入 TXT、DOCX、PDF。
+2. 检查右侧预览，并在“结构识别与人工修正”中更正标题层级或段落类型。
+3. 根据需要填写封面信息、调整格式设置。
+4. 在“导出前预览确认”中查看警告。
+5. 导出 Word。
+6. 首次在 Word/WPS 中打开后，更新目录字段以刷新真实页码。
+
+## 项目结构
+
+```text
+src/
+  App.jsx                 页面和导出流程
+  utils/cleaner.js        文本规范化、结构识别和 HTML 预览
+  utils/structureOverrides.js  人工结构修正规则
+  utils/templateRules.js  从明确的格式说明文字中提取规则
+test/                     规则层自动化测试
+```
+
+## 已知限制
+
+- PDF 是固定版面格式，抽取文本后可能丢失段落和标题边界。
+- 扫描版 PDF 不包含可直接读取的文本，需要 OCR 才能支持。
+- 图片目前导出为占位提示，尚未从原文档迁移图片。
+- 复杂合并表格、脚注、交叉引用和公式对象尚未保留。
+- 结构识别采用规则匹配，导出前仍应由用户检查。
+
+## 隐私
+
+文本解析和导出在浏览器本地执行。PDF.js Worker 随应用一起打包，不依赖外部 CDN。
