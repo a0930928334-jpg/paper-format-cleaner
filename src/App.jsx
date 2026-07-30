@@ -1,25 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import mammoth from "mammoth";
-import * as pdfjsLib from "pdfjs-dist";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { normalizeText, extractStructure, toHtml, getCss } from "./utils/cleaner";
+import { extractDocxText, extractPdfText } from "./utils/documentImport";
 import {
-  AlignmentType,
-  Document,
-  Packer,
-  PageBreak,
-  Paragraph,
-  Table,
-  TableCell,
-  TableRow,
-  TabStopPosition,
-  TabStopType,
-  TextRun,
-  WidthType,
-} from "docx";
+  applyStructureOverrides,
+  STRUCTURE_TYPE_OPTIONS,
+} from "./utils/structureOverrides";
+import { analyzeTemplateText } from "./utils/templateRules";
 import { saveAs } from "file-saver";
 import "./index.css";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 const sample = `学校：浙江工商大学
 论文题目：基于人工智能的论文自动排版系统研究
@@ -164,8 +152,10 @@ function parseMarkdownTableRow(row) {
     .map((cell) => cell.trim());
 }
 
-function createWordTable(rows, style) {
+function createWordTable(rows, style, wordApi) {
   if (!rows.length) return null;
+
+  const { Paragraph, Table, TableCell, TableRow, TextRun, WidthType } = wordApi;
 
   return new Table({
     width: {
@@ -348,10 +338,15 @@ function buildQualityChecks(cleaned, mode, previewInfo) {
 }
 
 export default function App() {
+  const wordApiRef = useRef(null);
+
   const [input, setInput] = useState(() => {
     return localStorage.getItem("paper_cleaner_input") || sample;
   });
   const [showExportPreview, setShowExportPreview] = useState(false);
+  const [structureOverrides, setStructureOverrides] = useState(() => {
+    return loadSavedObject("paper_cleaner_structure_overrides", {});
+  });
 
   const [templateInfo, setTemplateInfo] = useState({
     name: "",
@@ -370,8 +365,17 @@ export default function App() {
   });
 
   const smartInput = useMemo(() => applyInputFallbacks(input), [input]);
-  const cleaned = useMemo(() => normalizeText(smartInput), [smartInput]);
+  const autoCleaned = useMemo(() => normalizeText(smartInput), [smartInput]);
+  const cleaned = useMemo(
+    () => applyStructureOverrides(autoCleaned, structureOverrides),
+    [autoCleaned, structureOverrides]
+  );
+  const autoStructure = useMemo(() => extractStructure(autoCleaned), [autoCleaned]);
   const structure = useMemo(() => extractStructure(cleaned), [cleaned]);
+  const structureByIndex = useMemo(
+    () => new Map(structure.map((item) => [item.index, item])),
+    [structure]
+  );
   const html = useMemo(() => toHtml(cleaned), [cleaned]);
   const autoMeta = useMemo(() => parseMeta(cleaned), [cleaned]);
 
@@ -402,6 +406,13 @@ export default function App() {
     localStorage.setItem("paper_cleaner_style", JSON.stringify(style));
   }, [style]);
 
+  useEffect(() => {
+    localStorage.setItem(
+      "paper_cleaner_structure_overrides",
+      JSON.stringify(structureOverrides)
+    );
+  }, [structureOverrides]);
+
   function finalMeta() {
     return {
       school: coverInfo.school.trim() || autoMeta.school,
@@ -429,81 +440,21 @@ export default function App() {
     }));
   }
 
-  function analyzeTemplateText(text, fileName) {
-    const content = text || "";
+  function replaceInput(nextInput) {
+    setInput(nextInput);
+    setStructureOverrides({});
+  }
 
-    let school = "";
-    if (content.includes("浙江工商大学")) {
-      school = "浙江工商大学";
-    } else {
-      const schoolMatch = content.match(/[\u4e00-\u9fa5]{2,20}(大学|学院)/);
-      school = schoolMatch ? schoolMatch[0] : "";
-    }
-
-    let bodyFont = "SimSun";
-    let headingFont = "SimHei";
-    let englishFont = "Times New Roman";
-
-    let bodySize = 24;
-    let headingSize = 28;
-    let smallHeadingSize = 24;
-    let tableSize = 21;
-    let lineSpacing = 360;
-    let paragraphAfter = 120;
-    let firstLineIndent = 420;
-
-    if (content.includes("宋体")) bodyFont = "SimSun";
-    if (content.includes("黑体")) headingFont = "SimHei";
-    if (content.includes("Times New Roman")) englishFont = "Times New Roman";
-
-    if (content.includes("小四")) bodySize = 24;
-    if (content.includes("四号")) bodySize = 28;
-    if (content.includes("小三")) headingSize = 30;
-    if (content.includes("三号")) headingSize = 32;
-
-    if (
-      content.includes("1.5") ||
-      content.includes("1.5倍") ||
-      content.includes("1.5 倍") ||
-      content.includes("1.5倍行距")
-    ) {
-      lineSpacing = 360;
-    }
-
-    if (
-      content.includes("首行缩进") ||
-      content.includes("缩进2") ||
-      content.includes("缩进 2")
-    ) {
-      firstLineIndent = 420;
-    }
-
-    const rulesText = [
-      `检测文件：${fileName}`,
-      school ? `识别学校：${school}` : "未识别到明确学校名称",
-      `正文字体：${bodyFont}`,
-      `标题字体：${headingFont}`,
-      `英文字体：${englishFont}`,
-      `正文字号：${bodySize}`,
-      `标题字号：${headingSize}`,
-      `行距：${lineSpacing}`,
-      `首行缩进：${firstLineIndent}`,
-    ].join("；");
-
-    return {
-      school,
-      bodyFont,
-      headingFont,
-      englishFont,
-      bodySize,
-      headingSize,
-      smallHeadingSize,
-      tableSize,
-      lineSpacing,
-      paragraphAfter,
-      firstLineIndent,
-      rulesText,
-    };
+  function updateStructureType(index, type) {
+    setStructureOverrides((previous) => {
+      const next = { ...previous };
+      if (type === "auto") {
+        delete next[index];
+      } else {
+        next[index] = type;
+      }
+      return next;
+    });
   }
 
   async function handleTemplateUpload(event) {
@@ -526,23 +477,11 @@ export default function App() {
 
       if (lowerName.endsWith(".docx")) {
         const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        text = result.value || "";
+        text = await extractDocxText(arrayBuffer);
       } else if (lowerName.endsWith(".pdf")) {
         const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-        const pages = [];
-        const maxPages = Math.min(pdf.numPages, 5);
-
-        for (let i = 1; i <= maxPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          const pageText = content.items.map((item) => item.str).join(" ");
-          pages.push(pageText);
-        }
-
-        text = pages.join("\n");
+        const result = await extractPdfText(arrayBuffer, { maxPages: 5 });
+        text = result.text;
       } else {
         setTemplateInfo({
           name: fileName,
@@ -558,24 +497,18 @@ export default function App() {
 
       setTemplateInfo({
         name: fileName,
-        type: lowerName.endsWith(".pdf") ? "PDF 模板" : "Word 模板",
-        status: "模板解析完成，已应用格式规则",
+        type: lowerName.endsWith(".pdf") ? "PDF 格式说明" : "Word 格式说明",
+        status:
+          detected.appliedRuleCount > 0
+            ? `已应用 ${detected.appliedRuleCount} 项明确写出的格式规则`
+            : "已读取文件，但未发现可确认的文字格式规则，继续使用当前设置",
         detectedSchool: detected.school,
         detectedRules: detected.rulesText,
       });
 
       setStyle((prev) => ({
         ...prev,
-        bodyFont: detected.bodyFont,
-        headingFont: detected.headingFont,
-        englishFont: detected.englishFont,
-        bodySize: detected.bodySize,
-        headingSize: detected.headingSize,
-        smallHeadingSize: detected.smallHeadingSize,
-        tableSize: detected.tableSize,
-        lineSpacing: detected.lineSpacing,
-        paragraphAfter: detected.paragraphAfter,
-        firstLineIndent: detected.firstLineIndent,
+        ...detected.styleUpdates,
       }));
 
       if (detected.school) {
@@ -607,20 +540,14 @@ export default function App() {
 
       if (fileName.endsWith(".docx")) {
         const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        text = result.value || "";
+        text = await extractDocxText(arrayBuffer);
       } else if (fileName.endsWith(".pdf")) {
         const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-        const pages = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          pages.push(content.items.map((item) => item.str).join(" "));
+        const result = await extractPdfText(arrayBuffer, { maxPages: 100 });
+        text = result.text;
+        if (result.truncated) {
+          alert(`PDF 共 ${result.totalPages} 页，为避免浏览器卡顿，本次只读取前 ${result.processedPages} 页。`);
         }
-
-        text = pages.join("\n\n");
       } else if (fileName.endsWith(".txt")) {
         text = await file.text();
       } else {
@@ -628,7 +555,7 @@ export default function App() {
         return;
       }
 
-      setInput(text);
+      replaceInput(text);
       alert("文档内容已读取，可以在左侧继续修改。");
     } catch (error) {
       console.error(error);
@@ -667,8 +594,10 @@ export default function App() {
   }
 
   function p(text, options = {}) {
+    const { AlignmentType, Paragraph, TextRun } = wordApiRef.current;
     return new Paragraph({
       alignment: options.align || AlignmentType.LEFT,
+      heading: options.heading,
       indent: options.indent,
       spacing:
         options.spacing || {
@@ -689,6 +618,7 @@ export default function App() {
   }
 
   function mixedP(runs, options = {}) {
+    const { AlignmentType, Paragraph, TextRun } = wordApiRef.current;
     return new Paragraph({
       alignment: options.align || AlignmentType.LEFT,
       indent: options.indent,
@@ -711,6 +641,7 @@ export default function App() {
   }
 
   function blankLine(after = 240) {
+    const { Paragraph, TextRun } = wordApiRef.current;
     return new Paragraph({
       spacing: { after },
       children: [new TextRun({ text: "" })],
@@ -718,12 +649,26 @@ export default function App() {
   }
 
   function pageBreak() {
+    const { PageBreak, Paragraph } = wordApiRef.current;
     return new Paragraph({
       children: [new PageBreak()],
     });
   }
 
-  function exportWord() {
+  async function exportWord() {
+    const wordApi = await import("docx");
+    wordApiRef.current = wordApi;
+    const {
+      AlignmentType,
+      Document,
+      Footer,
+      HeadingLevel,
+      Packer,
+      PageNumber,
+      Paragraph,
+      TableOfContents,
+      TextRun,
+    } = wordApi;
     const meta = finalMeta();
     const lines = cleaned.split("\n");
 
@@ -776,6 +721,27 @@ export default function App() {
       if (/^\[KEYWORDS_EN\] /.test(line)) {
         keywordsEn = line.replace(/^\[KEYWORDS_EN\] /, "").trim();
         zone = "body";
+        continue;
+      }
+
+      if (/^\[ABSTRACT_BODY\] /.test(line)) {
+        zone = "abstract";
+        abstractLines.push(line.replace(/^\[ABSTRACT_BODY\] /, "").trim());
+        continue;
+      }
+
+      if (/^\[ABSTRACT_EN_BODY\] /.test(line)) {
+        zone = "abstractEn";
+        abstractEnLines.push(line.replace(/^\[ABSTRACT_EN_BODY\] /, "").trim());
+        continue;
+      }
+
+      if (/^\[BODY\] /.test(line)) {
+        zone = "body";
+        addBodyItem({
+          type: "paragraph",
+          text: line.replace(/^\[BODY\] /, "").trim(),
+        });
         continue;
       }
 
@@ -1225,54 +1191,13 @@ export default function App() {
       })
     );
 
-    const tocTab = [
-      {
-        type: TabStopType.RIGHT,
-        position: TabStopPosition.MAX,
-      },
-    ];
-
-    bodyItems
-      .filter((item) => ["chapter", "section", "subsection"].includes(item.type))
-      .forEach((item) => {
-        const indent =
-          item.type === "subsection"
-            ? { left: 840 }
-            : item.type === "section"
-            ? { left: 420 }
-            : undefined;
-
-        frontChildren.push(
-          new Paragraph({
-            indent,
-            tabStops: tocTab,
-            spacing: { after: 120 },
-            children: [
-              new TextRun({
-                text: `${item.tocLabel}\t${item.page}`,
-                size: Number(style.bodySize),
-                font: style.bodyFont,
-              }),
-            ],
-          })
-        );
-      });
-
-    if (refItems.length) {
-      frontChildren.push(
-        new Paragraph({
-          tabStops: tocTab,
-          spacing: { after: 120 },
-          children: [
-            new TextRun({
-              text: `参考文献\t${Math.max(1, chapterIdx + 1)}`,
-              size: Number(style.bodySize),
-              font: style.bodyFont,
-            }),
-          ],
-        })
-      );
-    }
+    frontChildren.push(
+      new TableOfContents("正文目录", {
+        hyperlink: true,
+        headingStyleRange: "1-3",
+        beginDirty: true,
+      })
+    );
 
     const bodyChildren = [];
 
@@ -1289,19 +1214,15 @@ export default function App() {
         spacing: { after: 140 },
       }),
 
-      p("- １ -", {
-        align: AlignmentType.CENTER,
-        size: 20,
-        font: style.bodyFont,
-        spacing: { after: 420 },
-      })
+      blankLine(280)
     );
 
     bodyItems.forEach((item) => {
       if (item.type === "chapter") {
         bodyChildren.push(
-          p(item.title, {
+          p(item.tocLabel, {
             align: AlignmentType.CENTER,
+            heading: HeadingLevel.HEADING_1,
             bold: true,
             size: Number(style.headingSize),
             font: style.headingFont,
@@ -1313,7 +1234,8 @@ export default function App() {
 
       if (item.type === "section") {
         bodyChildren.push(
-          p(item.title, {
+          p(item.tocLabel, {
+            heading: HeadingLevel.HEADING_2,
             bold: true,
             size: Number(style.smallHeadingSize),
             font: style.headingFont,
@@ -1325,7 +1247,8 @@ export default function App() {
 
       if (item.type === "subsection") {
         bodyChildren.push(
-          p(item.title, {
+          p(item.tocLabel, {
+            heading: HeadingLevel.HEADING_3,
             bold: true,
             size: Number(style.smallHeadingSize),
             font: style.headingFont,
@@ -1382,7 +1305,7 @@ export default function App() {
       }
 
       if (item.type === "table") {
-        const table = createWordTable(item.rows, style);
+        const table = createWordTable(item.rows, style, wordApi);
         if (table) {
           bodyChildren.push(table);
           bodyChildren.push(blankLine(160));
@@ -1409,6 +1332,7 @@ export default function App() {
       bodyChildren.push(
         p("参考文献", {
           align: AlignmentType.CENTER,
+          heading: HeadingLevel.HEADING_1,
           bold: true,
           size: Number(style.headingSize),
           font: style.headingFont,
@@ -1460,7 +1384,18 @@ export default function App() {
           properties: {
             page: {
               margin: pageMargin,
+              pageNumbers: { start: 1 },
             },
+          },
+          footers: {
+            default: new Footer({
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new TextRun({ children: [PageNumber.CURRENT] })],
+                }),
+              ],
+            }),
           },
           children: bodyChildren,
         },
@@ -1510,6 +1445,7 @@ export default function App() {
 
       {/* 顶部：模板 + 识别状态 */}
       <section
+        className="top-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "1.4fr 1fr",
@@ -1518,9 +1454,9 @@ export default function App() {
         }}
       >
         <div className="card">
-          <h2>上传格式模板（可选）</h2>
+          <h2>上传格式说明（可选）</h2>
           <p className="desc">
-            不上传也可以直接使用默认浙江工商大学模板。上传 Word 或 PDF 后，系统会尝试识别学校、字体、字号和行距。
+            当前使用预设的浙江工商大学模板。上传 Word 或 PDF 后，只会读取其中明确写出的学校、字体、字号和行距说明，不会假装识别文档内部样式。
           </p>
 
           <input
@@ -1569,6 +1505,13 @@ export default function App() {
               <div>
                 <strong>识别学校：</strong>
                 {templateInfo.detectedSchool}
+              </div>
+            )}
+
+            {templateInfo.detectedRules && (
+              <div>
+                <strong>检测说明：</strong>
+                {templateInfo.detectedRules}
               </div>
             )}
           </div>
@@ -1693,11 +1636,11 @@ export default function App() {
                   marginTop: 10,
                 }}
               >
-                <button onClick={() => setInput("")}>清空文本</button>
+                <button onClick={() => replaceInput("")}>清空文本</button>
 
                 <button
                   onClick={() => {
-                    setInput(sample);
+                    replaceInput(sample);
                     setCoverInfo(defaultCoverInfo);
                     setStyle(defaultStyle);
                   }}
@@ -1720,7 +1663,7 @@ export default function App() {
 
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => replaceInput(e.target.value)}
             style={{
               minHeight: 520,
             }}
@@ -1967,20 +1910,61 @@ export default function App() {
               fontWeight: 700,
             }}
           >
-            结构识别结果
+            结构识别与人工修正
           </summary>
 
-          <div className="structure" style={{ marginTop: 12 }}>
-            {structure
-              .filter((item) => item.type !== "空行")
-              .slice(0, 40)
-              .map((item) => (
-                <div className="structureItem" key={item.index}>
-                  <span>{item.type}</span>
-                  <p>{item.text}</p>
-                </div>
-              ))}
+          <div className="structureEditorToolbar">
+            <p className="desc">
+              修改后会立即影响右侧预览和 Word 导出；替换原始内容时会自动清空这些修正。
+            </p>
+            <button
+              type="button"
+              onClick={() => setStructureOverrides({})}
+              disabled={Object.keys(structureOverrides).length === 0}
+            >
+              重置人工修正（{Object.keys(structureOverrides).length}）
+            </button>
           </div>
+
+          <div className="structureEditor">
+            {autoStructure
+              .filter((item) => item.type !== "空行")
+              .map((autoItem) => {
+                const override = structureOverrides[autoItem.index] || "auto";
+                const finalItem = structureByIndex.get(autoItem.index);
+                const finalType =
+                  override === "ignore" ? "已忽略" : finalItem?.type || autoItem.type;
+
+                return (
+                  <div
+                    className={`structureEditorRow ${override !== "auto" ? "isOverridden" : ""}`}
+                    key={autoItem.index}
+                  >
+                    <span className="structureLineNumber">{autoItem.index + 1}</span>
+                    <div>
+                      <select
+                        className="structureTypeSelect"
+                        aria-label={`第 ${autoItem.index + 1} 行的结构类型`}
+                        value={override}
+                        onChange={(event) =>
+                          updateStructureType(autoItem.index, event.target.value)
+                        }
+                      >
+                        <option value="auto">自动：{autoItem.type}</option>
+                        {STRUCTURE_TYPE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="structureFinalType">结果：{finalType}</span>
+                    </div>
+                    <p>{autoItem.text || "（空内容）"}</p>
+                  </div>
+                );
+              })}
+          </div>
+
         </details>
       </section>
     </main>

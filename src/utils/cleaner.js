@@ -186,6 +186,9 @@ export function extractStructure(text) {
     if (trim === "[REFERENCES]") return { type: "参考文献标题", text: "参考文献", index };
 
     if (/^\[META\] /.test(trim)) return { type: "封面信息", text: trim.replace(/^\[META\] /, ""), index };
+    if (/^\[BODY\] /.test(trim)) return { type: "正文", text: trim.replace(/^\[BODY\] /, ""), index };
+    if (/^\[ABSTRACT_BODY\] /.test(trim)) return { type: "摘要正文", text: trim.replace(/^\[ABSTRACT_BODY\] /, ""), index };
+    if (/^\[ABSTRACT_EN_BODY\] /.test(trim)) return { type: "英文摘要正文", text: trim.replace(/^\[ABSTRACT_EN_BODY\] /, ""), index };
     if (/^\[KEYWORDS\] /.test(trim)) return { type: "关键词", text: trim.replace(/^\[KEYWORDS\] /, ""), index };
     if (/^\[KEYWORDS_EN\] /.test(trim)) return { type: "英文关键词", text: trim.replace(/^\[KEYWORDS_EN\] /, ""), index };
     if (/^\[H1\] /.test(trim)) return { type: "一级标题", text: trim.replace(/^\[H1\] /, ""), index };
@@ -216,7 +219,7 @@ export function toHtml(text) {
 
     if (trim === "[ABSTRACT]") {
       zone = "abstract";
-      result.push(`<h2 class="section-title">摘　要</h2>`);
+      result.push(`<h2 class="section-title">摘 要</h2>`);
       continue;
     }
 
@@ -233,6 +236,24 @@ export function toHtml(text) {
     }
 
     if (/^\[META\] /.test(trim)) continue;
+
+    if (/^\[BODY\] /.test(trim)) {
+      zone = "body";
+      result.push(`<p class="body-para">${escapeHtml(trim.replace(/^\[BODY\] /, ""))}</p>`);
+      continue;
+    }
+
+    if (/^\[ABSTRACT_BODY\] /.test(trim)) {
+      zone = "abstract";
+      result.push(`<p class="abstract-body">${escapeHtml(trim.replace(/^\[ABSTRACT_BODY\] /, ""))}</p>`);
+      continue;
+    }
+
+    if (/^\[ABSTRACT_EN_BODY\] /.test(trim)) {
+      zone = "abstractEn";
+      result.push(`<p class="abstract-body">${escapeHtml(trim.replace(/^\[ABSTRACT_EN_BODY\] /, ""))}</p>`);
+      continue;
+    }
 
     if (/^\[KEYWORDS\] /.test(trim)) {
       const kw = trim.replace(/^\[KEYWORDS\] /, "");
