@@ -1,5 +1,5 @@
 /**
- * 浙江工商大学毕业论文格式清洗工具 - 最终整合版
+ * AI 论文格式清洗：把原始文本转换成带结构标签的中间文本
  *
  * 目标：
  * 1. 将原始 AI 文本转换成稳定的中间结构标签
@@ -129,10 +129,12 @@ export function normalizeText(input) {
       continue;
     }
 
+    // 只把「像公式」的短行当公式：有等号、很短、没有句号逗号、中文字不多
+    const cjkCount = (trim.match(/[\u4e00-\u9fa5]/g) || []).length;
     if (
       /^公式\s*[:：]/.test(trim) ||
       /^\$\$.*\$\$$/.test(trim) ||
-      (/=/.test(trim) && trim.length <= 90 && !/[。！？]/.test(trim))
+      (/=/.test(trim) && trim.length <= 90 && !/[。！？，；]/.test(trim) && cjkCount <= 10)
     ) {
       out.push(`[FORMULA] ${trim.replace(/^公式\s*[:：]\s*/, "")}`);
       continue;
@@ -216,7 +218,7 @@ export function toHtml(text) {
 
     if (trim === "[ABSTRACT]") {
       zone = "abstract";
-      result.push(`<h2 class="section-title">摘　要</h2>`);
+      result.push(`<h2 class="section-title">摘\u3000要</h2>`);
       continue;
     }
 
