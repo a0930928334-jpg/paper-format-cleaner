@@ -84,8 +84,9 @@ export function inlineSection(line) {
   return null;
 }
 
-const KEYWORDS_CN =/^(?:【\s*关\s*键\s*词\s*】|关\s*键\s*词\s*[:：]?)\s*(.*)$/;
-const KEYWORDS_EN = /^key\s*words?\s*[:：]?\s*(.*)$/i;
+// 关键词后面必须紧跟冒号，或者整行就是这个词；「关键词提取是……」是正文
+const KEYWORDS_CN = /^(?:【\s*关\s*键\s*词\s*】|关\s*键\s*词\s*(?:[:：]|$))\s*(.*)$/;
+const KEYWORDS_EN = /^key\s*words?\s*(?:[:：]|$)\s*(.*)$/i;
 
 /** 关键词行：返回 { lang: "cn" | "en", text }，不是关键词行返回 null。 */
 export function keywordsOf(line) {
@@ -95,6 +96,28 @@ export function keywordsOf(line) {
   const en = t.match(KEYWORDS_EN);
   if (en) return { lang: "en", text: en[1].trim() };
   return null;
+}
+
+const REF_TYPE = /\[(?:J|M|C|D|R|S|P|N|Z|EB)(?:\/OL)?\]/;
+const YEAR = /(^|\D)(1[5-9]|20)\d{2}(\D|$)/;
+
+/** 参考文献区之外的 [n] 行：带文献类型标识，或者 ] 后有空格且有四位年份，才算参考文献。 */
+function looksLikeReference(line) {
+  if (!/^\[\d+\]/.test(line)) return false;
+  return REF_TYPE.test(line) || (/^\[\d+\]\s/.test(line) && YEAR.test(line));
+}
+
+/** 图表题：图1 / 表 3-2 / 表1.2 开头，不超过 40 字，没有句读符号。返回标签名或 null。 */
+function captionOf(line) {
+  const m = line.match(/^(图|表)\s*\d+(?:[.\-－]\d+)*/);
+  if (!m || line.length > 40 || /[。，；！？]/.test(line)) return null;
+  return m[1] === "表" ? "TABLE_CAPTION" : "FIGURE_CAPTION";
+}
+
+/** 等号行像公式：短、没有句读、中文少、英文长单词不超过 3 个、不以英文句号结尾。 */
+function looksLikeEquation(line, cjkCount) {
+  const words = (line.match(/[A-Za-z]{3,}/g) || []).length;
+  return /=/.test(line) && line.length <= 90 && !/[。！？，；]/.test(line) && cjkCount <= 10 && words <= 3 && !/\.$/.test(line);
 }
 
 /** 按编号判断标题级别，没有编号返回 null。 */
@@ -208,19 +231,15 @@ export function normalizeText(input) {
       continue;
     }
 
-    if (/^\[\d+\]/.test(trim)) {
+    if (looksLikeReference(trim)) {
       const content = trim.replace(/^\[\d+\]\s*/, "");
       out.push(`[REF] ${content}`);
       continue;
     }
 
-    if (/^表\s*\d+/.test(trim)) {
-      out.push(`[TABLE_CAPTION] ${trim}`);
-      continue;
-    }
-
-    if (/^图\s*\d+/.test(trim)) {
-      out.push(`[FIGURE_CAPTION] ${trim}`);
+    const caption = captionOf(trim);
+    if (caption) {
+      out.push(`[${caption}] ${trim}`);
       continue;
     }
 
@@ -236,7 +255,7 @@ export function normalizeText(input) {
     if (
       /^公式\s*[:：]/.test(trim) ||
       /^\$\$.*\$\$$/.test(trim) ||
-      (/=/.test(trim) && trim.length <= 90 && !/[。！？，；]/.test(trim) && cjkCount <= 10)
+      looksLikeEquation(trim, cjkCount)
     ) {
       out.push(`[FORMULA] ${trim.replace(/^公式\s*[:：]\s*/, "")}`);
       continue;

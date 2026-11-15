@@ -96,3 +96,37 @@ test("冒号后面没内容、或者没有冒号的「摘要……」正文不�
   assert.deepEqual(tags("一、引言\n摘要生成算法是本文的研究重点。"), ["[H1] 引言", "摘要生成算法是本文的研究重点。"]);
   assert.deepEqual(tags("摘要："), ["[ABSTRACT]"]);
 });
+
+/* ---------- 问题 4：正文行被误判 ---------- */
+
+test("正文里的引用、图表说明、带等号的英文句子、以关键词开头的句子保持为正文", () => {
+  const bodyLines = [
+    "[1]指出，规则方法在排版中效果较好。",
+    "图1展示了系统的整体架构，包括三个模块。",
+    "表2列出了各模型的准确率。",
+    "The accuracy was 95% (n = 200) on the test set",
+    "关键词提取是自然语言处理的基础任务。",
+    "Keyword extraction is a basic NLP task.",
+  ];
+  for (const line of bodyLines) {
+    assert.deepEqual(tags(`一、引言\n${line}`), ["[H1] 引言", line], line);
+  }
+});
+
+test("真正的图表题、公式和参考文献条目保持原来的识别结果", () => {
+  assert.deepEqual(tags("图1 系统整体流程示意图"), ["[FIGURE_CAPTION] 图1 系统整体流程示意图"]);
+  assert.deepEqual(tags("表1 结果"), ["[TABLE_CAPTION] 表1 结果"]);
+  assert.deepEqual(tags("图 3-2 模块关系"), ["[FIGURE_CAPTION] 图 3-2 模块关系"]);
+  assert.deepEqual(tags("表1.2 实验参数"), ["[TABLE_CAPTION] 表1.2 实验参数"]);
+  assert.deepEqual(tags("y = ax + b"), ["[FORMULA] y = ax + b"]);
+  assert.deepEqual(tags("公式：E = mc^2"), ["[FORMULA] E = mc^2"]);
+  assert.deepEqual(tags("loss = -sum(y * log(p))"), ["[FORMULA] loss = -sum(y * log(p))"]);
+  assert.deepEqual(tags("一、引言\n[1] 张三. 论文排版[J]. 计算机学报, 2020."), ["[H1] 引言", "[REF] 张三. 论文排版[J]. 计算机学报, 2020."]);
+  assert.deepEqual(tags("[2] Smith J. Paper formatting. Springer, 2019"), ["[REF] Smith J. Paper formatting. Springer, 2019"]);
+});
+
+test("关键词行必须带冒号或者整行只有这个词", () => {
+  assert.deepEqual(tags("关键词"), ["[KEYWORDS]"]);
+  assert.deepEqual(tags("Keywords: AI"), ["[KEYWORDS_EN] AI"]);
+  assert.deepEqual(tags("关键词: AI"), ["[KEYWORDS] AI"]);
+});
