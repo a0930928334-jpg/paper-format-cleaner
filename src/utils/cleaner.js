@@ -68,7 +68,23 @@ export function sectionKeyword(line) {
   return hit ? hit[0] : null;
 }
 
-const KEYWORDS_CN = /^(?:【\s*关\s*键\s*词\s*】|关\s*键\s*词\s*[:：]?)\s*(.*)$/;
+// 行内摘要：只有冒号（或【】）后面有内容才拆分，「摘要生成算法是……」这种正文不受影响
+const INLINE_SECTIONS = [
+  ["abstract", /^(?:【\s*(?:中文)?摘\s*要\s*】\s*|(?:中文)?摘\s*要\s*[:：]\s*)(\S.*)$/],
+  ["abstractEn", /^(?:【\s*abstract\s*】\s*|abstract\s*[:：]\s*)(\S.*)$/i],
+];
+
+/** 「摘要：本文……」「Abstract: This paper …」：返回 { kind, text }，否则 null。 */
+export function inlineSection(line) {
+  const t = String(line || "").replace(/\*\*|__/g, "").trim();
+  for (const [kind, re] of INLINE_SECTIONS) {
+    const m = t.match(re);
+    if (m) return { kind, text: m[1].trim() };
+  }
+  return null;
+}
+
+const KEYWORDS_CN =/^(?:【\s*关\s*键\s*词\s*】|关\s*键\s*词\s*[:：]?)\s*(.*)$/;
 const KEYWORDS_EN = /^key\s*words?\s*[:：]?\s*(.*)$/i;
 
 /** 关键词行：返回 { lang: "cn" | "en", text }，不是关键词行返回 null。 */
@@ -164,6 +180,13 @@ export function normalizeText(input) {
     if (section === "abstractEn") {
       inReferences = false;
       out.push("[ABSTRACT_EN]");
+      continue;
+    }
+
+    const inline = inlineSection(trim);
+    if (inline) {
+      inReferences = false;
+      out.push(inline.kind === "abstractEn" ? "[ABSTRACT_EN]" : "[ABSTRACT]", inline.text);
       continue;
     }
 

@@ -2,7 +2,7 @@
  * 论文结构相关的纯函数：封面信息解析、输入兜底、文档模式判断和导出前检查。
  * 这些函数不依赖浏览器或 React，可以直接用 node --test 测试。
  */
-import { keywordsOf, sectionKeyword } from "./cleaner.js";
+import { inlineSection, keywordsOf, sectionKeyword } from "./cleaner.js";
 
 export const DEFAULT_SCHOOL = "浙江工商大学";
 export const UNTITLED = "未命名论文";
@@ -86,7 +86,8 @@ export function applyInputFallbacks(rawText) {
 
   if (!hasPaperSignal) return text;
 
-  const isAbstractStart = (line) => sectionKeyword(line) === "abstract";
+  const isInlineAbstract = (line) => inlineSection(line)?.kind === "abstract";
+  const isAbstractStart = (line) => sectionKeyword(line) === "abstract" || isInlineAbstract(line);
   const hasTitle = lines.some((line) => /^(论文题目|题目)[:：]/.test(line));
   const hasAbstract = lines.some(isAbstractStart);
   const hasKeywords = lines.some((line) => keywordsOf(line)?.lang === "cn");
@@ -124,7 +125,8 @@ export function applyInputFallbacks(rawText) {
     }
   } else if (!hasKeywords) {
     const abstractIndex = lines.findIndex(isAbstractStart);
-    lines.splice(abstractIndex + 2, 0, "关键词：");
+    // 行内摘要本身就是摘要正文，关键词紧跟其后
+    lines.splice(abstractIndex + (isInlineAbstract(lines[abstractIndex]) ? 1 : 2), 0, "关键词：");
   }
 
   return lines.join("\n");

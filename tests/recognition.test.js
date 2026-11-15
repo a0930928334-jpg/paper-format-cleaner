@@ -70,3 +70,29 @@ test("题目占用了 # 之后，## 章节整体提升一级", () => {
   assert.deepEqual(tags("## 引言\n### 研究背景\n## 方法"), ["[H1] 引言", "[H2] 研究背景", "[H1] 方法"]);
   assert.deepEqual(tags("# 引言\n## 研究背景"), ["[H1] 引言", "[H2] 研究背景"]);
 });
+
+/* ---------- 问题 3：行内摘要 ---------- */
+
+const LONG_ABSTRACT = "本文研究了人工智能在论文排版中的应用，提出了一种基于规则的结构识别方法，并实现了完整的系统。";
+
+test("行内写法「摘要：……」拆成摘要标题和摘要正文，不再重复补摘要", () => {
+  const input = `摘要：${LONG_ABSTRACT}\n关键词：AI；排版\n一、引言\n正文。`;
+  assert.ok(!applyInputFallbacks(input).split("\n").includes("摘要"), "兜底不再插入摘要占位");
+  assert.deepEqual(pipeline(input), ["[ABSTRACT]", LONG_ABSTRACT, "[KEYWORDS] AI；排版", "[H1] 引言", "正文。"]);
+});
+
+test("行内写法「Abstract: ……」拆成英文摘要", () => {
+  assert.deepEqual(tags("Abstract: This paper designs a formatting system."), ["[ABSTRACT_EN]", "This paper designs a formatting system."]);
+  assert.deepEqual(tags("**摘要**：本文研究了排版。"), ["[ABSTRACT]", "本文研究了排版。"]);
+  assert.deepEqual(tags("【摘要】本文研究了排版。"), ["[ABSTRACT]", "本文研究了排版。"]);
+});
+
+test("行内摘要缺关键词时，关键词占位补在摘要正文后面", () => {
+  const lines = applyInputFallbacks(`论文题目：甲\n摘要：${LONG_ABSTRACT}\n一、引言\n正文\n二、结论\n正文`).split("\n");
+  assert.deepEqual(lines.slice(1, 3), [`摘要：${LONG_ABSTRACT}`, "关键词："]);
+});
+
+test("冒号后面没内容、或者没有冒号的「摘要……」正文不拆分", () => {
+  assert.deepEqual(tags("一、引言\n摘要生成算法是本文的研究重点。"), ["[H1] 引言", "摘要生成算法是本文的研究重点。"]);
+  assert.deepEqual(tags("摘要："), ["[ABSTRACT]"]);
+});
