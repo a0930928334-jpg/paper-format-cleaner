@@ -164,6 +164,46 @@ export function buildPreviewInfo(cleaned, meta) {
   };
 }
 
+// 正文引用：[1]、[1,3]、[2-4]；[ 前面紧挨字母数字的（如 a[2]）是数组下标，不算
+const CITATION = /(^|[^A-Za-z0-9_\]])\[(\d{1,3}(?:\s*[-–~～,，、]\s*\d{1,3})*)\]/g;
+
+function citedNumbers(group) {
+  const out = [];
+  for (const part of group.split(/\s*[,，、]\s*/)) {
+    const [a, b] = part.split(/\s*[-–~～]\s*/).map(Number);
+    if (b && b >= a && b - a <= 50) for (let n = a; n <= b; n++) out.push(n);
+    else out.push(a);
+  }
+  return out.filter((n) => n >= 1);
+}
+
+/** 正文里的 [n] 引用和参考文献条目对一下：引用了不存在的编号、没被引用的条目。 */
+export function citationCheck(cleaned) {
+  const lines = cleaned.split("\n").map((line) => line.trim());
+  const refCount = lines.filter((line) => line.startsWith("[REF] ")).length;
+  const cited = new Set();
+  for (const line of lines) {
+    if (!line || /^\[[A-Z][A-Z0-9_]*\]/.test(line)) continue; // 只看正文段落
+    for (const m of line.matchAll(CITATION)) citedNumbers(m[2]).forEach((n) => cited.add(n));
+  }
+  const sorted = [...cited].sort((a, b) => a - b);
+  return {
+    cited: sorted,
+    missing: sorted.filter((n) => n > refCount),
+    uncited: Array.from({ length: refCount }, (_, i) => i + 1).filter((n) => !cited.has(n)),
+  };
+}
+
+const listNumbers = (nums) => nums.slice(0, 8).map((n) => `[${n}]`).join("、") + (nums.length > 8 ? " 等" : "");
+
+function citationItems(cleaned) {
+  const { cited, missing, uncited } = citationCheck(cleaned);
+  if (!cited.length) return []; // 正文没有引用标注时不提示，很多 AI 文本本来就不标
+  if (missing.length) return [{ type: "warn", text: `正文引用了不存在的参考文献 ${listNumbers(missing)}` }];
+  if (uncited.length) return [{ type: "warn", text: `有 ${uncited.length} 条参考文献正文没有引用：${listNumbers(uncited)}` }];
+  return [{ type: "ok", text: "正文引用与参考文献编号一致" }];
+}
+
 export function buildQualityChecks(cleaned, mode, info) {
   const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean);
   const check = (ok, okText, warnText) => ({ type: ok ? "ok" : "warn", text: ok ? okText : warnText });
@@ -181,6 +221,7 @@ export function buildQualityChecks(cleaned, mode, info) {
     check(info.hasKeywords, "已识别关键词", "未识别到关键词，导出后请补充"),
     check(info.chapters.length > 0, `已识别 ${info.chapters.length} 个一级标题`, "未识别到一级标题，可能会按普通正文导出"),
     check(info.references > 0, `已识别 ${info.references} 条参考文献`, "未识别到参考文献，可以继续导出"),
+    ...citationItems(cleaned),
   ];
 }
 

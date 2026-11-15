@@ -6,6 +6,7 @@ import {
   analyzeDocumentMode,
   buildPreviewInfo,
   buildQualityChecks,
+  citationCheck,
   mergeMeta,
   parseMeta,
   safeFileName,
@@ -78,4 +79,28 @@ test("论文判断：至少两类信号，或两个以上章节标题", () => {
   assert.ok(isPadded("题目甲\n关键词：甲\n参考文献\n[1] 张三. 文献[J]. 2020."), "关键词 + 参考文献");
   assert.ok(!isPadded("题目甲\n一、引言\n正文"), "只有一个章节标题");
   assert.ok(!isPadded("会议纪要\n参考文献格式需要统一，请大家注意。"), "只是提到参考文献");
+});
+
+/* ---------- 改进：引用一致性检查 ---------- */
+
+test("引用检查：找出正文引用了却不存在的编号、没被引用的参考文献", () => {
+  const cleaned = normalizeText("一、引言\n已有研究[1]表明，规则方法有效[3-5]。\n数组 a[2] 不是引用。\n参考文献\n[1] 甲[J]. 2020.\n[2] 乙[J]. 2021.\n[3] 丙[J]. 2022.");
+  const result = citationCheck(cleaned);
+  assert.deepEqual(result.cited, [1, 3, 4, 5]);
+  assert.deepEqual(result.missing, [4, 5]);
+  assert.deepEqual(result.uncited, [2]);
+});
+
+test("导出前检查提示引用和参考文献对不上；正文没有引用时不提示", () => {
+  const bad = normalizeText(applyInputFallbacks("论文题目：甲\n摘要\n内容\n关键词：乙\n一、引言\n见文献[2]。\n参考文献\n[1] 甲[J]. 2020."));
+  const warns = buildQualityChecks(bad, "中文论文模式", buildPreviewInfo(bad, parseMeta(bad))).filter((c) => c.type === "warn");
+  assert.ok(warns.some((c) => c.text.includes("[2]")), "提示 [2] 不存在");
+
+  const none = normalizeText("论文题目：甲\n摘要\n内容\n一、引言\n正文。\n参考文献\n[1] 甲[J]. 2020.");
+  const checks = buildQualityChecks(none, "中文论文模式", buildPreviewInfo(none, parseMeta(none)));
+  assert.ok(!checks.some((c) => c.text.includes("引用")));
+
+  const good = normalizeText("一、引言\n见文献[1]、[2]。\n参考文献\n[1] 甲[J]. 2020.\n[2] 乙[J]. 2021.");
+  const okChecks = buildQualityChecks(good, "中文论文模式", buildPreviewInfo(good, parseMeta(good)));
+  assert.ok(okChecks.some((c) => c.type === "ok" && c.text.includes("引用")));
 });
