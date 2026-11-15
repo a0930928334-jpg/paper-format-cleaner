@@ -13,7 +13,7 @@ import {
 import { analyzeTemplateText, DEFAULT_STYLE } from "../src/utils/templateRules.js";
 
 test("缺题目和摘要时自动补上", () => {
-  const raw = "人工智能与论文写作\n这是一段足够长的正文内容，用来模拟 AI 直接输出的第一段摘要文字，长度超过四十个字没有问题。\n一、引言\n正文";
+  const raw = "人工智能与论文写作\n这是一段足够长的正文内容，用来模拟 AI 直接输出的第一段摘要文字，长度超过四十个字没有问题。\n一、引言\n正文\n二、结论\n正文";
   const lines = applyInputFallbacks(raw).split("\n");
   assert.equal(lines[0], "论文题目：人工智能与论文写作");
   assert.equal(lines[1], "摘要");
@@ -63,4 +63,19 @@ test("模板识别：小四不会被误认成四号", () => {
 test("模板里找不到的参数沿用默认值", () => {
   const { style } = analyzeTemplateText("没有任何格式说明");
   assert.deepEqual(style, DEFAULT_STYLE);
+});
+
+test("只出现「结论」「引言」等词的求职信不当论文，不补摘要", () => {
+  const raw = "Dear Hiring Manager,\n我的结论是我非常适合这个岗位，希望能够获得面试机会，谢谢您的阅读和考虑，期待您的回复。\nSincerely,";
+  assert.equal(applyInputFallbacks(raw), raw);
+  assert.equal(analyzeDocumentMode(raw, normalizeText(applyInputFallbacks(raw))), "普通文档模式");
+});
+
+test("论文判断：至少两类信号，或两个以上章节标题", () => {
+  const isPadded = (raw) => applyInputFallbacks(raw) !== raw;
+  assert.ok(isPadded("题目甲\n一、引言\n正文\n二、结论\n正文"), "两个章节标题");
+  assert.ok(isPadded("题目甲\n摘要\n内容\n一、引言\n正文"), "摘要 + 章节标题");
+  assert.ok(isPadded("题目甲\n关键词：甲\n参考文献\n[1] 张三. 文献[J]. 2020."), "关键词 + 参考文献");
+  assert.ok(!isPadded("题目甲\n一、引言\n正文"), "只有一个章节标题");
+  assert.ok(!isPadded("会议纪要\n参考文献格式需要统一，请大家注意。"), "只是提到参考文献");
 });

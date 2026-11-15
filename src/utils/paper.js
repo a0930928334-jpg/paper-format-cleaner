@@ -2,7 +2,7 @@
  * 论文结构相关的纯函数：封面信息解析、输入兜底、文档模式判断和导出前检查。
  * 这些函数不依赖浏览器或 React，可以直接用 node --test 测试。
  */
-import { inlineSection, keywordsOf, sectionKeyword } from "./cleaner.js";
+import { inlineSection, keywordsOf, normalizeText, sectionKeyword } from "./cleaner.js";
 
 export const DEFAULT_SCHOOL = "浙江工商大学";
 export const UNTITLED = "未命名论文";
@@ -69,6 +69,19 @@ const META_LINE = /^(论文题目|题目|英文题目|英文标题|学校|院校
 const CHAPTER_LINE = /^[一二三四五六七八九十]+[、.．\s]/;
 
 /**
+ * 判断文本是不是论文：用识别规则跑一遍，至少命中两类信号
+ * （摘要、关键词、参考文献、章节标题），或者有两个以上一级标题。
+ * 只出现「结论」「引言」这类词不算。
+ */
+export function looksLikePaper(text) {
+  const tagged = normalizeText(text).split("\n");
+  const has = (re) => tagged.some((line) => re.test(line));
+  const signals = [/^\[ABSTRACT(_EN)?\]$/, /^\[KEYWORDS(_EN)?\]/, /^\[REFERENCES\]$/, /^\[H[123]\] /].filter(has).length;
+  const chapters = tagged.filter((line) => line.startsWith("[H1] ")).length;
+  return signals >= 2 || chapters >= 2;
+}
+
+/**
  * AI 文本经常缺题目、摘要或关键词。看起来像论文时，补上占位，
  * 让后续的结构识别和 Word 导出不至于整体错位。
  */
@@ -80,11 +93,7 @@ export function applyInputFallbacks(rawText) {
     .filter((line) => line.toLowerCase() !== "documents:");
 
   const text = lines.join("\n");
-  const hasPaperSignal =
-    /摘要|关键词|Abstract|Keywords|参考文献|引言|文献综述|研究背景|系统设计|结论/.test(text) ||
-    /^[一二三四五六七八九十][、.\s]/m.test(text);
-
-  if (!hasPaperSignal) return text;
+  if (!looksLikePaper(text)) return text;
 
   const isInlineAbstract = (line) => inlineSection(line)?.kind === "abstract";
   const isAbstractStart = (line) => sectionKeyword(line) === "abstract" || isInlineAbstract(line);
