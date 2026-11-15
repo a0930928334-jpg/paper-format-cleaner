@@ -217,3 +217,12 @@ test("斜体规则不误伤乘号、变量名和文件名", () => {
 test("normalizeText 清理行内 Markdown，* 项目符号统一成 -", () => {
   assert.deepEqual(tags("一、引言\n这是*斜体*和`代码`，详见[链接](https://a.com)。\n---\n* 要点一"), ["[H1] 引言", "这是斜体和代码，详见链接。", "- 要点一"]);
 });
+
+/* ---------- 问题 9：孤立的三级标题 ---------- */
+
+test("前面没有二级标题的三级标题提升为二级标题，arabic 方案不再出现 1.0.1", () => {
+  const cleaned = normalizeText("一、引言\n1.1.1 研究背景\n（一）研究方法\n1.1.1 数据来源\n二、实验\n1.2.1 实验设置");
+  assert.deepEqual(cleaned.split("\n"), ["[H1] 引言", "[H2] 研究背景", "[H2] 研究方法", "[H3] 数据来源", "[H1] 实验", "[H2] 实验设置"]);
+  const labels = parsePaper(cleaned, "arabic").body.map((b) => b.label);
+  assert.deepEqual(labels, ["1", "1.1", "1.2", "1.2.1", "2", "2.1"]);
+});

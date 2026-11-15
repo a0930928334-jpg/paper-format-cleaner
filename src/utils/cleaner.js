@@ -215,6 +215,7 @@ export function normalizeText(input) {
     /^(学校|院校|论文题目|题目|英文题目|英文标题|专业|班级|学号|姓名|日期)[:：]/;
 
   let inReferences = false;
+  let h2Seen = false; // 当前一级标题下是否已有二级标题
 
   for (const rawLine of lines) {
     const trim = rawLine.trim();
@@ -279,6 +280,7 @@ export function normalizeText(input) {
       const heading = headingOf(trim, shift);
       if (heading?.level === 1) {
         inReferences = false;
+        h2Seen = false;
         out.push(`[H1] ${heading.text}`);
         continue;
       }
@@ -319,7 +321,11 @@ export function normalizeText(input) {
 
     const heading = headingOf(trim, shift);
     if (heading) {
-      out.push(`[H${heading.level}] ${heading.text}`);
+      let level = heading.level;
+      // 前面没有二级标题的三级标题提升为二级，避免编出 1.0.1
+      if (level === 3 && !h2Seen) level = 2;
+      h2Seen = level === 1 ? false : h2Seen || level === 2;
+      out.push(`[H${level}] ${heading.text}`);
       continue;
     }
 
