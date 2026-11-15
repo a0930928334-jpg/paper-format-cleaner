@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pdfItemsToText, reflowLines } from "../src/utils/fileText.js";
+import { normalizeText } from "../src/utils/cleaner.js";
+import { docxHtmlToText, pdfItemsToText, reflowLines } from "../src/utils/fileText.js";
+import { applyInputFallbacks } from "../src/utils/paper.js";
 
 const item = (str, hasEOL, y = 700) => ({ str, hasEOL, transform: [12, 0, 0, 12, 72, y] });
 
@@ -47,4 +49,59 @@ test("PDF 页码行被删掉，跨页的段落接上", () => {
 
 test("PDF 页面中间的纯数字行（如表格数据）不当页码删掉", () => {
   assert.equal(reflowLines("准确率如下：\n95\n召回率如下：\n90\n结束。"), "准确率如下：\n95\n召回率如下：\n90\n结束。");
+});
+
+/* ---------- 问题 11：.docx 保留标题结构 ---------- */
+
+const MAMMOTH_HTML = [
+  "<h1>基于AI的系统研究</h1>",
+  "<h2>摘要</h2>",
+  "<p>本文研究了<strong>排版</strong>。</p>",
+  "<p>关键词：AI；排版</p>",
+  '<h1><a id="_Toc1"></a>一、引言</h1>',
+  "<p>正文 &amp; 内容&lt;1&gt;&#12290;</p>",
+  "<ul><li>要点一</li><li>要点二</li></ul>",
+  "<ol><li>第一点</li><li><p>第二点</p></li></ol>",
+  "<table><tr><td><p>模块</p></td><td><p>功能</p></td></tr><tr><td><p>A|B</p></td><td><p>清洗</p><p>识别</p></td></tr></table>",
+  "<h3>小节</h3>",
+  "<h4>四级标题</h4>",
+  "<p>行一<br />行二</p>",
+  '<p><img src="data:image/png;base64,AAAA" /></p>',
+].join("");
+
+test("docxHtmlToText：标题转 #，列表转 - 和 1.，表格转 Markdown 表格", () => {
+  assert.equal(
+    docxHtmlToText(MAMMOTH_HTML),
+    [
+      "# 基于AI的系统研究",
+      "## 摘要",
+      "本文研究了排版。",
+      "关键词：AI；排版",
+      "# 一、引言",
+      "正文 & 内容<1>。",
+      "- 要点一",
+      "- 要点二",
+      "1. 第一点",
+      "2. 第二点",
+      "| 模块 | 功能 |",
+      "| --- | --- |",
+      "| A｜B | 清洗 识别 |",
+      "### 小节",
+      "四级标题",
+      "行一",
+      "行二",
+    ].join("\n")
+  );
+});
+
+test(".docx 转出来的文本能识别出题目、摘要、章节和表格", () => {
+  const out = normalizeText(applyInputFallbacks(docxHtmlToText(MAMMOTH_HTML))).split("\n");
+  assert.equal(out[0], "[META] 论文题目：基于AI的系统研究");
+  assert.ok(out.includes("[ABSTRACT]"));
+  assert.ok(out.includes("[H1] 引言"));
+  assert.ok(out.includes("[TABLE] | 模块 | 功能 |"));
+});
+
+test("docxHtmlToText：空标题、空列表项的前缀不带到下一行", () => {
+  assert.equal(docxHtmlToText("<h1></h1><p>正文</p><ul><li></li></ul><p>下一段</p>"), "正文\n下一段");
 });

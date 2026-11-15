@@ -11,7 +11,7 @@ import {
   safeFileName,
 } from "./utils/paper";
 import { analyzeTemplateText, DEFAULT_STYLE } from "./utils/templateRules";
-import { pdfItemsToText, reflowLines } from "./utils/fileText";
+import { docxHtmlToText, pdfItemsToText, reflowLines } from "./utils/fileText";
 import { SAMPLE_TEXT } from "./sample";
 
 const DEFAULT_COVER = {
@@ -88,8 +88,9 @@ async function readFileAsText(file, { maxPdfPages } = {}) {
 
   if (name.endsWith(".docx")) {
     const { default: mammoth } = await import("mammoth");
-    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-    return result.value || "";
+    // 转成 HTML 再转文本，保留 Word 的标题样式、列表和表格结构
+    const result = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+    return docxHtmlToText(result.value || "");
   }
 
   if (name.endsWith(".pdf")) {

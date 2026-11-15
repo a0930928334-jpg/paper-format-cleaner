@@ -98,3 +98,98 @@ export function reflowLines(text) {
   }
   return out.join("\n").trim();
 }
+
+/* ---------- .docx：mammoth.convertToHtml 的输出转文本 ---------- */
+
+const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+function decodeEntities(text) {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, name) => {
+    if (name[0] !== "#") return ENTITIES[name.toLowerCase()] ?? match;
+    const code = name[1] === "x" || name[1] === "X" ? parseInt(name.slice(2), 16) : parseInt(name.slice(1), 10);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+  });
+}
+
+const cellText = (text) => text.replace(/\s+/g, " ").trim().replace(/\|/g, "｜");
+
+function markdownTable(rows) {
+  if (!rows.length) return [];
+  const width = Math.max(...rows.map((row) => row.length));
+  const line = (cells) => `| ${Array.from({ length: width }, (_, i) => cells[i] ?? "").join(" | ")} |`;
+  return [line(rows[0]), line(Array(width).fill("---")), ...rows.slice(1).map(line)];
+}
+
+/**
+ * mammoth 输出的 HTML 转成文本：h1/h2/h3 转 # / ## / ###，li 转「- 」或「1. 」，
+ * 表格转 Markdown 表格，其余标签去掉只留文字。之后走正常的识别流程。
+ */
+export function docxHtmlToText(html) {
+  const lines = [];
+  const lists = [];
+  let current = "";
+  let prefix = "";
+  let table = null;
+
+  const flush = () => {
+    const text = current.replace(/\s+/g, " ").trim();
+    if (text) {
+      lines.push(prefix + text);
+      prefix = "";
+    }
+    current = "";
+  };
+  const append = (text) => {
+    if (table?.cell != null) table.cell += text;
+    else current += text;
+  };
+
+  for (const [, tag, text] of String(html || "").matchAll(/(<[^>]*>)|([^<]+)/g)) {
+    if (text !== undefined) {
+      append(decodeEntities(text));
+      continue;
+    }
+    const m = tag.match(/^<(\/?)([a-z][a-z0-9]*)/i);
+    if (!m) continue;
+    const closing = m[1] === "/";
+    const name = m[2].toLowerCase();
+
+    if (name === "table") {
+      flush();
+      if (closing && table) lines.push(...markdownTable(table.rows));
+      table = closing ? null : { rows: [], row: [], cell: null };
+      continue;
+    }
+    if (table) {
+      // 表格里：tr 换行，td/th 是单元格，单元格里的多个段落用空格连起来
+      if (name === "tr") {
+        if (closing && table.row.length) table.rows.push(table.row);
+        table.row = [];
+      } else if (name === "td" || name === "th") {
+        if (closing) table.row.push(cellText(table.cell ?? ""));
+        table.cell = closing ? null : "";
+      } else if (name === "p" || name === "br") {
+        append(" ");
+      }
+      continue;
+    }
+
+    if (/^h[1-6]$/.test(name)) {
+      flush();
+      const level = Number(name[1]);
+      prefix = !closing && level <= 3 ? `${"#".repeat(level)} ` : "";
+    } else if (name === "ul" || name === "ol") {
+      flush();
+      if (closing) lists.pop();
+      else lists.push({ ordered: name === "ol", n: 0 });
+    } else if (name === "li") {
+      flush();
+      const list = lists[lists.length - 1];
+      prefix = closing ? "" : list?.ordered ? `${++list.n}. ` : "- ";
+    } else if (name === "p" || name === "br") {
+      flush();
+    }
+  }
+  flush();
+  return lines.join("\n");
+}
