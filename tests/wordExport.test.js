@@ -64,3 +64,46 @@ test("普通文档模式按信件格式导出", async () => {
   assert.ok(document.includes("Dear Hiring Manager,"));
   assert.ok(!document.includes("TOC \\h"));
 });
+
+/** 拆出 document.xml 里每个段落的样式和文字。 */
+function paragraphs(xml) {
+  return [...xml.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)].map(([p]) => ({
+    style: (p.match(/<w:pStyle w:val="([^"]+)"/) || [])[1] || "",
+    text: [...p.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join(""),
+    pageBreak: p.includes('w:type="page"'),
+  }));
+}
+
+test("致谢、附录另起一页，用标题 1 样式但不编号，并按原文顺序放在参考文献后面", async () => {
+  const text = "论文题目：甲\n摘要\n内容\n关键词：乙\n一、引言\n正文。\n参考文献\n[1] 张三. 文献[J]. 2020.\n致谢\n感谢导师。\n附录A 调查问卷\n问卷内容。";
+  const back = normalizeText(text);
+  const paper = parsePaper(back);
+  assert.deepEqual(paper.backMatter.map((p) => p.kind), ["references", "acknowledgements", "appendix"]);
+  assert.equal(paper.references.length, 1);
+
+  const { doc } = buildPaperDocument(back, parseMeta(back), DEFAULT_STYLE);
+  const paras = paragraphs((await unzip(doc)).document);
+  const at = (text) => paras.findIndex((p) => p.text === text && !p.style.startsWith("TOC"));
+  for (const title of ["参考文献", "致谢", "附录A 调查问卷"]) {
+    const i = at(title);
+    assert.ok(i > 0, `找到「${title}」`);
+    assert.equal(paras[i].style, "Heading1", `「${title}」是标题 1`);
+    assert.ok(paras[i - 1].pageBreak, `「${title}」前面分页`);
+  }
+  assert.ok(at("参考文献") < at("致谢") && at("致谢") < at("附录A 调查问卷"), "按原文顺序");
+  assert.ok(!paras.some((p) => /^[一二三四五六七八九十]+、(致谢|附录)/.test(p.text)), "致谢、附录没有章节编号");
+  assert.ok(at("感谢导师。") > at("致谢"), "致谢正文跟在致谢标题后");
+});
+
+test("普通文档模式清理 Markdown：# 标题用标题样式，表格输出为三线表", async () => {
+  const raw = "# 周报\n本周**完成**了`排版`工具，详见[文档](https://a.com)。\n## 进展\n| 项目 | 状态 |\n| --- | --- |\n| A | 完成 |\n* 下周计划";
+  const { doc, title } = buildGenericDocument(raw, "", DEFAULT_STYLE);
+  assert.equal(title, "周报");
+  const { document } = await unzip(doc);
+  const paras = paragraphs(document);
+  assert.ok(paras.some((p) => p.style === "Heading2" && p.text === "进展"), "## 用标题 2 样式");
+  assert.ok(paras.some((p) => p.text === "本周完成了排版工具，详见文档。"));
+  assert.ok(paras.some((p) => p.text === "下周计划"));
+  assert.ok(document.includes("<w:tbl>"), "表格是 Word 表格");
+  for (const leftover of ["#", "**", "`", "](", "| --- |"]) assert.ok(!paras.some((p) => p.text.includes(leftover)), `没有残留 ${leftover}`);
+});

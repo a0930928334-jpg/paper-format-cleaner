@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeText, extractStructure, toHtml, getCss } from "./utils/cleaner";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { normalizeText, extractStructure, toHtml, getCss, htmlDocument } from "./utils/cleaner";
 import {
   analyzeDocumentMode,
   applyInputFallbacks,
@@ -11,6 +11,8 @@ import {
   safeFileName,
 } from "./utils/paper";
 import { analyzeTemplateText, DEFAULT_STYLE } from "./utils/templateRules";
+import { docxHtmlToText, pdfItemsToText, reflowLines } from "./utils/fileText";
+import { clearSaved, STORAGE_KEYS } from "./utils/storage";
 import { SAMPLE_TEXT } from "./sample";
 
 const DEFAULT_COVER = {
@@ -87,8 +89,9 @@ async function readFileAsText(file, { maxPdfPages } = {}) {
 
   if (name.endsWith(".docx")) {
     const { default: mammoth } = await import("mammoth");
-    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-    return result.value || "";
+    // 转成 HTML 再转文本，保留 Word 的标题样式、列表和表格结构
+    const result = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+    return docxHtmlToText(result.value || "");
   }
 
   if (name.endsWith(".pdf")) {
@@ -101,9 +104,10 @@ async function readFileAsText(file, { maxPdfPages } = {}) {
     const last = Math.min(pdf.numPages, maxPdfPages || pdf.numPages);
     for (let i = 1; i <= last; i++) {
       const content = await (await pdf.getPage(i)).getTextContent();
-      pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+      pages.push(pdfItemsToText(content.items));
     }
-    return pages.join("\n\n");
+    // 页之间用换页符分隔，重排时据此删页码、把跨页的段落接上
+    return reflowLines(pages.join("\f"));
   }
 
   throw new Error("只支持 .docx、.pdf、.txt 文件");
@@ -125,29 +129,32 @@ function Select({ id, label, value, options, onChange }) {
 }
 
 export default function App() {
-  const [input, setInput] = useState(() => loadSaved("paper_cleaner_input", SAMPLE_TEXT));
-  const [cover, setCover] = useState(() => loadSaved("paper_cleaner_cover", DEFAULT_COVER));
-  const [style, setStyle] = useState(() => loadSaved("paper_cleaner_style", DEFAULT_STYLE));
-  const [numbering, setNumbering] = useState(() => loadSaved("paper_cleaner_numbering", "cn"));
+  const [input, setInput] = useState(() => loadSaved(STORAGE_KEYS.input, SAMPLE_TEXT));
+  const [cover, setCover] = useState(() => loadSaved(STORAGE_KEYS.cover, DEFAULT_COVER));
+  const [style, setStyle] = useState(() => loadSaved(STORAGE_KEYS.style, DEFAULT_STYLE));
+  const [numbering, setNumbering] = useState(() => loadSaved(STORAGE_KEYS.numbering, "cn"));
   const [template, setTemplate] = useState({ status: "未上传模板，使用默认的浙江工商大学格式", rules: "" });
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
   const noticeTimer = useRef(0);
 
-  const smartInput = useMemo(() => applyInputFallbacks(input), [input]);
+  // 输入框用最新的 input，识别和预览用延后的值：长文本时打字不会被整条流水线卡住
+  const deferredInput = useDeferredValue(input);
+  const previewStale = deferredInput !== input;
+  const smartInput = useMemo(() => applyInputFallbacks(deferredInput), [deferredInput]);
   const cleaned = useMemo(() => normalizeText(smartInput), [smartInput]);
   const structure = useMemo(() => extractStructure(cleaned), [cleaned]);
-  const html = useMemo(() => toHtml(cleaned), [cleaned]);
+  const html = useMemo(() => toHtml(cleaned, { numbering }), [cleaned, numbering]);
   const autoMeta = useMemo(() => parseMeta(cleaned), [cleaned]);
   const mode = useMemo(() => analyzeDocumentMode(smartInput, cleaned), [smartInput, cleaned]);
   const info = useMemo(() => buildPreviewInfo(cleaned, mergeMeta(cover, autoMeta)), [cleaned, cover, autoMeta]);
   const checks = useMemo(() => buildQualityChecks(cleaned, mode, info), [cleaned, mode, info]);
   const warnings = checks.filter((c) => c.type === "warn").length;
 
-  useEffect(() => save("paper_cleaner_input", input), [input]);
-  useEffect(() => save("paper_cleaner_cover", cover), [cover]);
-  useEffect(() => save("paper_cleaner_style", style), [style]);
-  useEffect(() => save("paper_cleaner_numbering", numbering), [numbering]);
+  useEffect(() => save(STORAGE_KEYS.input, input), [input]);
+  useEffect(() => save(STORAGE_KEYS.cover, cover), [cover]);
+  useEffect(() => save(STORAGE_KEYS.style, style), [style]);
+  useEffect(() => save(STORAGE_KEYS.numbering, numbering), [numbering]);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   function show(text, tone = "ok") {
@@ -212,7 +219,7 @@ export default function App() {
 
   async function downloadHtml() {
     const { saveAs } = await import("file-saver");
-    const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${info.title}</title><style>${getCss()}</style></head><body><div class="preview">${html}</div></body></html>`;
+    const page = htmlDocument(info.title, html);
     saveAs(new Blob([page], { type: "text/html;charset=utf-8" }), `${safeFileName(info.title)}.html`);
   }
 
@@ -253,6 +260,15 @@ export default function App() {
     setNumbering("cn");
     setTemplate({ status: "未上传模板，使用默认的浙江工商大学格式", rules: "" });
     show("已恢复示例文本和默认格式");
+  }
+
+  function clearLocalData() {
+    const ok = clearSaved();
+    setInput("");
+    setCover(DEFAULT_COVER);
+    setStyle(DEFAULT_STYLE);
+    setNumbering("cn");
+    show(ok ? "已清除保存在本浏览器里的论文内容和设置" : "浏览器不允许访问本地存储，没有可清除的数据", ok ? "ok" : "error");
   }
 
   return (
@@ -352,7 +368,7 @@ export default function App() {
           <h2>清洗后预览</h2>
           <p className="desc">按识别结果排版，导出的 Word 会自动加上标题编号、目录和页码。</p>
           <style>{getCss()}</style>
-          <div className="preview" dangerouslySetInnerHTML={{ __html: html }} />
+          <div className="preview" style={{ opacity: previewStale ? 0.6 : 1 }} dangerouslySetInnerHTML={{ __html: html }} />
         </div>
       </section>
 
@@ -411,7 +427,11 @@ export default function App() {
       </section>
 
       <footer className="footer muted">
-        规则识别，不调用任何 AI 接口。导出后请对照学校最新格式要求再检查一遍。
+        <p>规则识别，不调用任何 AI 接口。导出后请对照学校最新格式要求再检查一遍。</p>
+        <p>
+          原始文本、封面信息和格式设置只保存在本浏览器里（localStorage），方便下次打开继续；在公共电脑上用完请清除。{" "}
+          <button className="ghost" onClick={clearLocalData}>清除本地数据</button>
+        </p>
       </footer>
     </main>
   );

@@ -28,6 +28,7 @@ import {
   VerticalAlign,
   WidthType,
 } from "docx";
+import { isMarkdownTableLine, isMarkdownTableSeparator, listItemText, stripInlineMarkdown } from "./cleaner.js";
 import { parseMarkdownTableRow, UNTITLED } from "./paper.js";
 
 const CN_NUMS = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五"];
@@ -51,17 +52,42 @@ export function headingLabel(level, counters, scheme = "cn") {
   return `${ss}.`;
 }
 
-/** 把中间标签文本拆成论文各部分。 */
+/**
+ * 把中间标签文本拆成论文各部分。
+ * 参考文献、致谢、附录放进有序数组 backMatter，按原文顺序输出；
+ * paper.references 仍然是全部参考文献条目的列表。
+ */
 export function parsePaper(cleaned, scheme = "cn") {
-  const paper = { abstract: [], abstractEn: [], keywords: "", keywordsEn: "", body: [], references: [] };
+  const paper = { abstract: [], abstractEn: [], keywords: "", keywordsEn: "", body: [], references: [], backMatter: [] };
   const counters = [0, 0, 0];
   let zone = "preamble";
+  let blocks = paper.body; // 正文块写到哪里：正文，或者当前的后置部分
+  let numbered = true; // 致谢、附录里的小标题不编号
+  let refs = null;
+
+  const startPart = (part) => {
+    paper.backMatter.push(part);
+    blocks = part.blocks;
+    numbered = part.kind === "body" || part.kind === "references";
+  };
+  const referencesPart = () => refs || (refs = { kind: "references", title: "参考文献", items: [], blocks: [] });
+  const addReference = (text) => {
+    if (!text) return;
+    referencesPart().items.push(text);
+    paper.references.push(text);
+  };
 
   const heading = (level, title) => {
+    // 后置部分之后又出现一级标题：按原文位置接着输出正文
+    if (level === 1 && paper.backMatter.length) startPart({ kind: "body", blocks: [] });
+    zone = "body";
+    if (!numbered) {
+      blocks.push({ type: "heading", level, title, label: "" });
+      return;
+    }
     counters[level - 1] += 1;
     for (let i = level; i < 3; i++) counters[i] = 0;
-    paper.body.push({ type: "heading", level, title, label: headingLabel(level, counters, scheme) });
-    zone = "body";
+    blocks.push({ type: "heading", level, title, label: headingLabel(level, counters, scheme) });
   };
 
   for (const raw of cleaned.split("\n")) {
@@ -70,7 +96,12 @@ export function parsePaper(cleaned, scheme = "cn") {
 
     if (line === "[ABSTRACT]") { zone = "abstract"; continue; }
     if (line === "[ABSTRACT_EN]") { zone = "abstractEn"; continue; }
-    if (line === "[REFERENCES]") { zone = "references"; continue; }
+    if (line === "[REFERENCES]") {
+      if (!paper.backMatter.includes(referencesPart())) startPart(referencesPart());
+      zone = "references";
+      continue;
+    }
+    if (line === "[ACKNOWLEDGEMENTS]") { startPart({ kind: "acknowledgements", title: "致谢", blocks: [] }); zone = "back"; continue; }
 
     const tag = line.match(/^\[([A-Z_0-9]+)\] ?(.*)$/);
     if (tag) {
@@ -81,15 +112,16 @@ export function parsePaper(cleaned, scheme = "cn") {
       if (name === "H1") { heading(1, text); continue; }
       if (name === "H2") { heading(2, text); continue; }
       if (name === "H3") { heading(3, text); continue; }
-      if (name === "REF") { if (text) paper.references.push(text); continue; }
-      if (name === "TABLE_CAPTION") { paper.body.push({ type: "tableCaption", text }); zone = "body"; continue; }
-      if (name === "FIGURE_CAPTION") { paper.body.push({ type: "figureCaption", text }); zone = "body"; continue; }
-      if (name === "FORMULA") { paper.body.push({ type: "formula", text }); zone = "body"; continue; }
+      if (name === "REF") { addReference(text); continue; }
+      if (name === "APPENDIX") { startPart({ kind: "appendix", title: text || "附录", blocks: [] }); zone = "back"; continue; }
+      if (name === "TABLE_CAPTION") { blocks.push({ type: "tableCaption", text }); zone = "body"; continue; }
+      if (name === "FIGURE_CAPTION") { blocks.push({ type: "figureCaption", text }); zone = "body"; continue; }
+      if (name === "FORMULA") { blocks.push({ type: "formula", text }); zone = "body"; continue; }
       if (name === "TABLE") {
         const row = parseMarkdownTableRow(text);
-        const last = paper.body[paper.body.length - 1];
+        const last = blocks[blocks.length - 1];
         if (last && last.type === "table") last.rows.push(row);
-        else paper.body.push({ type: "table", rows: [row] });
+        else blocks.push({ type: "table", rows: [row] });
         zone = "body";
         continue;
       }
@@ -97,13 +129,15 @@ export function parsePaper(cleaned, scheme = "cn") {
 
     if (zone === "abstract") { paper.abstract.push(line); continue; }
     if (zone === "abstractEn") { paper.abstractEn.push(line); continue; }
-    if (zone === "references") { paper.references.push(line); continue; }
+    if (zone === "references") { addReference(line); continue; }
 
-    // 去掉 AI 文本里常见的项目符号和行首编号，按正文段落处理
-    const text = line.replace(/^[-•·]\s*/, "").replace(/^\d+[、.)．]\s*/, "").trim();
-    if (text) paper.body.push({ type: "paragraph", text });
+    // 项目符号去掉；列表项保留序号并统一格式；小数、年份开头的正文原样保留
+    const text = line.replace(/^(?:-\s+|[•·]\s*)/, "").trim();
+    if (text) blocks.push({ type: "paragraph", text: listItemText(text, scheme) ?? text });
   }
 
+  // 正文里零散的参考文献条目、但没有「参考文献」标题时，放在后置部分最前面
+  if (refs && !paper.backMatter.includes(refs)) paper.backMatter.unshift(refs);
   return paper;
 }
 
@@ -258,20 +292,28 @@ function abstractBlock(style, { title, label, paragraphs, placeholder, keywordLa
   return out;
 }
 
-function bodyBlocks(paper, style) {
-  const out = [];
-  const headingLevels = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3];
+const HEADING_LEVELS = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3];
 
-  for (const item of paper.body) {
+function headingParagraph(level, text) {
+  return new Paragraph({
+    heading: HEADING_LEVELS[level - 1],
+    indent: level === 3 ? { left: 0 } : undefined,
+    children: [new TextRun({ text })],
+  });
+}
+
+function headingText(item) {
+  if (!item.label) return item.title;
+  const sep = item.label.endsWith("、") || item.label.endsWith("）") ? "" : " ";
+  return `${item.label}${sep}${item.title}`;
+}
+
+/** 正文块（标题、段落、表格、图表题、公式）转成 Word 段落。 */
+function renderBlocks(items, style) {
+  const out = [];
+  for (const item of items) {
     if (item.type === "heading") {
-      const sep = item.label.endsWith("、") || item.label.endsWith("）") ? "" : " ";
-      out.push(
-        new Paragraph({
-          heading: headingLevels[item.level - 1],
-          indent: item.level === 3 ? { left: 0 } : undefined,
-          children: [new TextRun({ text: `${item.label}${sep}${item.title}` })],
-        })
-      );
+      out.push(headingParagraph(item.level, headingText(item)));
       continue;
     }
     if (item.type === "tableCaption") {
@@ -294,13 +336,24 @@ function bodyBlocks(paper, style) {
     }
     out.push(para(style, item.text, { indent: { firstLine: Number(style.firstLineIndent) } }));
   }
+  return out;
+}
 
-  if (paper.references.length) {
-    out.push(pageBreak());
-    out.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: "参考文献" })] }));
-    paper.references.forEach((ref, i) => {
-      out.push(para(style, `[${i + 1}] ${ref}`, { indent: { left: 420, hanging: 420 }, size: 21 }));
-    });
+/** 正文，加上按原文顺序排列的参考文献、致谢、附录（各自另起一页，标题 1 样式，不编号）。 */
+function bodyBlocks(paper, style) {
+  const out = renderBlocks(paper.body, style);
+  let refNo = 0;
+  for (const part of paper.backMatter) {
+    if (part.kind === "body") {
+      out.push(...renderBlocks(part.blocks, style));
+      continue;
+    }
+    if (part.kind === "references" && !part.items.length && !part.blocks.length) continue;
+    out.push(pageBreak(), headingParagraph(1, part.title));
+    for (const ref of part.items || []) {
+      out.push(para(style, `[${++refNo}] ${ref}`, { indent: { left: 420, hanging: 420 }, size: 21 }));
+    }
+    out.push(...renderBlocks(part.blocks, style));
   }
   return out;
 }
@@ -380,27 +433,48 @@ const LETTER_LINE = /^(Dear\b|Sincerely|Best regards|Kind regards|To:|Subject:|R
 
 export function buildGenericDocument(rawText, titleHint, style) {
   let lines = String(rawText || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(stripInlineMarkdown)
+    .join("\n")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "" && line.toLowerCase() !== "documents:");
 
+  const firstLine = (lines[0] || "").replace(/^#{1,6}\s+/, "");
   let title = titleHint && titleHint !== UNTITLED ? titleHint : "";
-  if (!title) title = lines[0] && lines[0].length <= 120 ? lines[0] : "清洗后的文档";
-  if (lines[0] === title) lines = lines.slice(1);
+  if (!title) title = firstLine && firstLine.length <= 120 ? firstLine : "清洗后的文档";
+  if (firstLine === title) lines = lines.slice(1);
 
   const children = [
     para(style, [{ text: title, bold: true, size: style.headingSize, cjkFont: style.headingFont }], { align: AlignmentType.CENTER, spacing: { after: 420 } }),
   ];
+  const headingRun = (text) => [{ text, bold: true, size: style.smallHeadingSize, cjkFont: style.headingFont }];
+  const headingSpacing = { before: 260, after: 160 };
 
-  for (const line of lines) {
-    if (/^[IVX]+\.\s+/.test(line) || /^#{1,3}\s+/.test(line)) {
-      children.push(para(style, [{ text: line.replace(/^#{1,3}\s+/, ""), bold: true, size: style.smallHeadingSize, cjkFont: style.headingFont }], { align: AlignmentType.LEFT, spacing: { before: 260, after: 160 } }));
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const md = line.match(/^(#{1,6})\s+(.+)$/);
+    if (isMarkdownTableLine(line)) {
+      // 连续的 Markdown 表格行合成一张三线表
+      const rows = [];
+      for (; i < lines.length && isMarkdownTableLine(lines[i]); i++) {
+        if (!isMarkdownTableSeparator(lines[i])) rows.push(parseMarkdownTableRow(lines[i]));
+      }
+      i--;
+      const table = threeLineTable(rows, style);
+      if (table) children.push(table, blank(160));
+    } else if (md) {
+      const level = Math.min(3, md[1].length);
+      children.push(para(style, headingRun(md[2]), { heading: HEADING_LEVELS[level - 1], align: AlignmentType.LEFT, spacing: headingSpacing }));
+    } else if (/^[IVX]+\.\s+/.test(line)) {
+      children.push(para(style, headingRun(line), { align: AlignmentType.LEFT, spacing: headingSpacing }));
     } else if (LETTER_LINE.test(line)) {
       children.push(para(style, line, { align: AlignmentType.LEFT, spacing: { after: 140 } }));
     } else if (/[:：]$/.test(line) && line.length <= 100) {
       children.push(para(style, [{ text: line, bold: true }], { align: AlignmentType.LEFT, spacing: { before: 180, after: 100 } }));
     } else {
-      children.push(para(style, line.replace(/^[-•·]\s*/, ""), { indent: { firstLine: Number(style.firstLineIndent) } }));
+      children.push(para(style, line.replace(/^(?:[-*+]\s+|[•·]\s*)/, ""), { indent: { firstLine: Number(style.firstLineIndent) } }));
     }
   }
 

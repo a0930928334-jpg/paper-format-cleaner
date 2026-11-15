@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeText, extractStructure } from "../src/utils/cleaner.js";
+import { normalizeText, extractStructure, htmlDocument } from "../src/utils/cleaner.js";
 
 const tags = (text) => normalizeText(text).split("\n").filter(Boolean);
 
@@ -15,7 +15,8 @@ test("三种常见标题写法都能识别，并去掉原有编号", () => {
   assert.deepEqual(tags("# 结论"), ["[H1] 结论"]);
   assert.deepEqual(tags("（一）研究背景"), ["[H2] 研究背景"]);
   assert.deepEqual(tags("1.2 研究方法"), ["[H2] 研究方法"]);
-  assert.deepEqual(tags("1.2.3 数据来源"), ["[H3] 数据来源"]);
+  // 三级标题前面要有二级标题，否则会被提升为二级标题（问题 9）
+  assert.deepEqual(tags("1.2 研究方法\n1.2.3 数据来源"), ["[H2] 研究方法", "[H3] 数据来源"]);
 });
 
 test("参考文献标题之后的每一行都是参考文献，并去掉原编号", () => {
@@ -42,4 +43,11 @@ test("清理 Markdown 加粗和全角空格", () => {
 test("extractStructure 给每行标上中文类型", () => {
   const types = extractStructure(normalizeText("摘要\n内容\n一、引言")).map((x) => x.type);
   assert.deepEqual(types, ["摘要标题", "正文", "一级标题"]);
+});
+
+test("导出 HTML 时题目经过转义", () => {
+  const page = htmlDocument('<script>alert(1)</script> & "题目"', "<p>正文</p>");
+  assert.ok(page.includes("<title>&lt;script&gt;alert(1)&lt;/script&gt; &amp; \"题目\"</title>"));
+  assert.ok(!page.includes("<script>"));
+  assert.ok(page.includes('<div class="preview"><p>正文</p></div>'));
 });
