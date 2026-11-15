@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { normalizeText, extractStructure, toHtml, getCss, htmlDocument } from "./utils/cleaner";
 import {
   analyzeDocumentMode,
@@ -138,7 +138,10 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const noticeTimer = useRef(0);
 
-  const smartInput = useMemo(() => applyInputFallbacks(input), [input]);
+  // 输入框用最新的 input，识别和预览用延后的值：长文本时打字不会被整条流水线卡住
+  const deferredInput = useDeferredValue(input);
+  const previewStale = deferredInput !== input;
+  const smartInput = useMemo(() => applyInputFallbacks(deferredInput), [deferredInput]);
   const cleaned = useMemo(() => normalizeText(smartInput), [smartInput]);
   const structure = useMemo(() => extractStructure(cleaned), [cleaned]);
   const html = useMemo(() => toHtml(cleaned, { numbering }), [cleaned, numbering]);
@@ -365,7 +368,7 @@ export default function App() {
           <h2>清洗后预览</h2>
           <p className="desc">按识别结果排版，导出的 Word 会自动加上标题编号、目录和页码。</p>
           <style>{getCss()}</style>
-          <div className="preview" dangerouslySetInnerHTML={{ __html: html }} />
+          <div className="preview" style={{ opacity: previewStale ? 0.6 : 1 }} dangerouslySetInnerHTML={{ __html: html }} />
         </div>
       </section>
 
