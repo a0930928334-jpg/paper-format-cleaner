@@ -252,3 +252,20 @@ test("数字开头的正文不当一级标题：编号不连续、量词、年�
   assert.deepEqual(tags("1 引言\n3 系统设计"), ["[H1] 引言", "3 系统设计"], "跳号不算");
   assert.deepEqual(tags("1 引言\n2 We propose a new method."), ["[H1] 引言", "2 We propose a new method."], "带句号的是句子");
 });
+
+/* ---------- 补充：（1）列表误判 ---------- */
+
+test("同一章已有（一）级二级标题时，（1）开头的行按列表处理", () => {
+  const cleaned = normalizeText("一、引言\n（一）研究背景\n（1）数据来源\n(2) 处理方法\n（二）研究方法\n（3）实验设置");
+  assert.deepEqual(cleaned.split("\n"), ["[H1] 引言", "[H2] 研究背景", "（1）数据来源", "(2) 处理方法", "[H2] 研究方法", "（3）实验设置"]);
+  const texts = (scheme) => parsePaper(cleaned, scheme).body.filter((b) => b.type === "paragraph").map((b) => b.text);
+  assert.deepEqual(texts("cn"), ["（1）数据来源", "（2）处理方法", "（3）实验设置"]);
+  assert.deepEqual(texts("arabic"), ["(1) 数据来源", "(2) 处理方法", "(3) 实验设置"]);
+  assert.ok(toHtml(cleaned).includes('<p class="list-item">（2）处理方法</p>'));
+  assert.equal(extractStructure(cleaned).filter((x) => x.type === "编号列表").length, 3);
+});
+
+test("没有（一）时（1）仍按二级标题；新的一章重新判断", () => {
+  assert.deepEqual(tags("一、引言\n（1）研究背景"), ["[H1] 引言", "[H2] 研究背景"]);
+  assert.deepEqual(tags("一、引言\n（一）背景\n（1）要点\n二、方法\n（1）总体设计"), ["[H1] 引言", "[H2] 背景", "（1）要点", "[H1] 方法", "[H2] 总体设计"]);
+});

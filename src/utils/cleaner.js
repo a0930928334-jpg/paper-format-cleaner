@@ -143,15 +143,20 @@ function looksLikeEquation(line, cjkCount) {
   return /=/.test(line) && line.length <= 90 && !/[。！？，；]/.test(line) && cjkCount <= 10 && words <= 3 && !/\.$/.test(line);
 }
 
-// 列表项：1、 1) 1） 1. 1．（点后面不能紧跟数字，排除 3.5 这种小数）
-const LIST_ITEM = /^(\d+)(?:[、)）]|[.．](?!\d))\s*(\S.*)$/;
+// 列表项：1、 1) 1） 1. 1．（点后面不能紧跟数字，排除 3.5 这种小数），以及（1） (1)
+const LIST_ITEM = /^(?:(\d+)(?:[、)）]|[.．](?!\d))|[（(](\d+)[）)])\s*(\S.*)$/;
 
 /** 列表项统一成论文常用序号：cn 方案用（1），arabic 方案用 (1)。不是列表项返回 null。 */
 export function listItemText(line, scheme = "cn") {
   const m = String(line || "").trim().match(LIST_ITEM);
   if (!m) return null;
-  return scheme === "arabic" ? `(${m[1]}) ${m[2]}` : `（${m[1]}）${m[2]}`;
+  const n = m[1] ?? m[2];
+  return scheme === "arabic" ? `(${n}) ${m[3]}` : `（${n}）${m[3]}`;
 }
+
+// （一）写法的二级标题；同一章出现过它之后，（1）开头的行是列表而不是标题
+const CN_SECTION = /^[（(][一二三四五六七八九十]+[）)]/;
+const PAREN_NUMBER = /^[（(]\d+[）)]/;
 
 // 带编号的二、三级标题要像标题：不太长、没有句末标点（排除「3.5 倍的效率……。」「2024.5 月份」）
 const shortTitle = (t) => t.length <= 40 && !/[。！？；]/.test(t);
@@ -229,6 +234,7 @@ export function normalizeText(input) {
 
   let inReferences = false;
   let h2Seen = false; // 当前一级标题下是否已有二级标题
+  let cnSectionSeen = false; // 当前一级标题下是否已有（一）写法的二级标题
   let lastChapter = 0; // 「1 引言」写法上一个一级标题的编号
 
   // 「1 引言」只有编号等于上一个 + 1 才算一级标题（第一个必须是 1），降低误判
@@ -305,6 +311,7 @@ export function normalizeText(input) {
       if (heading?.level === 1) {
         inReferences = false;
         h2Seen = false;
+        cnSectionSeen = false;
         out.push(`[H1] ${heading.text}`);
         continue;
       }
@@ -346,9 +353,15 @@ export function normalizeText(input) {
     const heading = findHeading(trim);
     if (heading) {
       let level = heading.level;
+      // 本章已有（一）级标题时，（1）开头的行按列表处理，保持为正文
+      if (level === 2 && cnSectionSeen && PAREN_NUMBER.test(trim)) {
+        out.push(trim);
+        continue;
+      }
       // 前面没有二级标题的三级标题提升为二级，避免编出 1.0.1
       if (level === 3 && !h2Seen) level = 2;
       h2Seen = level === 1 ? false : h2Seen || level === 2;
+      cnSectionSeen = level === 1 ? false : cnSectionSeen || (level === 2 && CN_SECTION.test(trim.replace(/^#{1,6}\s+/, "")));
       out.push(`[H${level}] ${heading.text}`);
       continue;
     }
