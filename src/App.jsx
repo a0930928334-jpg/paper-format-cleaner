@@ -12,6 +12,7 @@ import {
 } from "./utils/paper";
 import { analyzeTemplateText, DEFAULT_STYLE } from "./utils/templateRules";
 import { docxHtmlToText, pdfItemsToText, reflowLines } from "./utils/fileText";
+import { clearSaved, STORAGE_KEYS } from "./utils/storage";
 import { SAMPLE_TEXT } from "./sample";
 
 const DEFAULT_COVER = {
@@ -128,10 +129,10 @@ function Select({ id, label, value, options, onChange }) {
 }
 
 export default function App() {
-  const [input, setInput] = useState(() => loadSaved("paper_cleaner_input", SAMPLE_TEXT));
-  const [cover, setCover] = useState(() => loadSaved("paper_cleaner_cover", DEFAULT_COVER));
-  const [style, setStyle] = useState(() => loadSaved("paper_cleaner_style", DEFAULT_STYLE));
-  const [numbering, setNumbering] = useState(() => loadSaved("paper_cleaner_numbering", "cn"));
+  const [input, setInput] = useState(() => loadSaved(STORAGE_KEYS.input, SAMPLE_TEXT));
+  const [cover, setCover] = useState(() => loadSaved(STORAGE_KEYS.cover, DEFAULT_COVER));
+  const [style, setStyle] = useState(() => loadSaved(STORAGE_KEYS.style, DEFAULT_STYLE));
+  const [numbering, setNumbering] = useState(() => loadSaved(STORAGE_KEYS.numbering, "cn"));
   const [template, setTemplate] = useState({ status: "未上传模板，使用默认的浙江工商大学格式", rules: "" });
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -147,10 +148,10 @@ export default function App() {
   const checks = useMemo(() => buildQualityChecks(cleaned, mode, info), [cleaned, mode, info]);
   const warnings = checks.filter((c) => c.type === "warn").length;
 
-  useEffect(() => save("paper_cleaner_input", input), [input]);
-  useEffect(() => save("paper_cleaner_cover", cover), [cover]);
-  useEffect(() => save("paper_cleaner_style", style), [style]);
-  useEffect(() => save("paper_cleaner_numbering", numbering), [numbering]);
+  useEffect(() => save(STORAGE_KEYS.input, input), [input]);
+  useEffect(() => save(STORAGE_KEYS.cover, cover), [cover]);
+  useEffect(() => save(STORAGE_KEYS.style, style), [style]);
+  useEffect(() => save(STORAGE_KEYS.numbering, numbering), [numbering]);
   useEffect(() => () => clearTimeout(noticeTimer.current), []);
 
   function show(text, tone = "ok") {
@@ -256,6 +257,15 @@ export default function App() {
     setNumbering("cn");
     setTemplate({ status: "未上传模板，使用默认的浙江工商大学格式", rules: "" });
     show("已恢复示例文本和默认格式");
+  }
+
+  function clearLocalData() {
+    const ok = clearSaved();
+    setInput("");
+    setCover(DEFAULT_COVER);
+    setStyle(DEFAULT_STYLE);
+    setNumbering("cn");
+    show(ok ? "已清除保存在本浏览器里的论文内容和设置" : "浏览器不允许访问本地存储，没有可清除的数据", ok ? "ok" : "error");
   }
 
   return (
@@ -414,7 +424,11 @@ export default function App() {
       </section>
 
       <footer className="footer muted">
-        规则识别，不调用任何 AI 接口。导出后请对照学校最新格式要求再检查一遍。
+        <p>规则识别，不调用任何 AI 接口。导出后请对照学校最新格式要求再检查一遍。</p>
+        <p>
+          原始文本、封面信息和格式设置只保存在本浏览器里（localStorage），方便下次打开继续；在公共电脑上用完请清除。{" "}
+          <button className="ghost" onClick={clearLocalData}>清除本地数据</button>
+        </p>
       </footer>
     </main>
   );
