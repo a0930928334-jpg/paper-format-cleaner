@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeText, sectionKeyword } from "../src/utils/cleaner.js";
+import { extractStructure, normalizeText, sectionKeyword, toHtml } from "../src/utils/cleaner.js";
 import { applyInputFallbacks } from "../src/utils/paper.js";
 
 const tags = (text) => normalizeText(text).split("\n").filter(Boolean);
@@ -129,4 +129,33 @@ test("关键词行必须带冒号或者整行只有这个词", () => {
   assert.deepEqual(tags("关键词"), ["[KEYWORDS]"]);
   assert.deepEqual(tags("Keywords: AI"), ["[KEYWORDS_EN] AI"]);
   assert.deepEqual(tags("关键词: AI"), ["[KEYWORDS] AI"]);
+});
+
+/* ---------- 问题 5：参考文献后面的致谢、附录 ---------- */
+
+const BACK_MATTER = "参考文献\n[1] 张三. 文献[J]. 2020.\n致谢\n感谢导师的指导。\n附录A 调查问卷\n问卷内容……";
+
+test("致谢、附录结束参考文献区，各自输出标签", () => {
+  assert.deepEqual(tags(BACK_MATTER), [
+    "[REFERENCES]",
+    "[REF] 张三. 文献[J]. 2020.",
+    "[ACKNOWLEDGEMENTS]",
+    "感谢导师的指导。",
+    "[APPENDIX] 附录A 调查问卷",
+    "问卷内容……",
+  ]);
+});
+
+test("参考文献后面出现一级标题，参考文献区也结束", () => {
+  assert.deepEqual(tags("参考文献\n[1] 张三. 文献[J]. 2020.\n# 结论\n正文。"), ["[REFERENCES]", "[REF] 张三. 文献[J]. 2020.", "[H1] 结论", "正文。"]);
+});
+
+test("结构识别结果和预览都支持致谢、附录", () => {
+  const cleaned = normalizeText(BACK_MATTER);
+  const types = extractStructure(cleaned).map((x) => x.type);
+  assert.deepEqual(types, ["参考文献标题", "参考文献条目", "致谢标题", "正文", "附录标题", "正文"]);
+  const html = toHtml(cleaned);
+  assert.ok(html.includes('<h2 class="section-title">致谢</h2>'));
+  assert.ok(html.includes('<h2 class="section-title">附录A 调查问卷</h2>'));
+  assert.ok(html.includes('<p class="body-para">感谢导师的指导。</p>'), "致谢正文不是参考文献条目");
 });

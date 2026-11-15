@@ -206,6 +206,18 @@ export function normalizeText(input) {
       continue;
     }
 
+    if (section === "acknowledgements") {
+      inReferences = false;
+      out.push("[ACKNOWLEDGEMENTS]");
+      continue;
+    }
+
+    if (section === "appendix") {
+      inReferences = false;
+      out.push(`[APPENDIX] ${bareHeading(trim)}`);
+      continue;
+    }
+
     const inline = inlineSection(trim);
     if (inline) {
       inReferences = false;
@@ -226,6 +238,13 @@ export function normalizeText(input) {
     }
 
     if (inReferences) {
+      // 遇到一级标题，参考文献区结束
+      const heading = headingOf(trim, shift);
+      if (heading?.level === 1) {
+        inReferences = false;
+        out.push(`[H1] ${heading.text}`);
+        continue;
+      }
       const content = trim.replace(/^\[\d+\]\s*/, "").trim();
       if (content) out.push(`[REF] ${content}`);
       continue;
@@ -280,6 +299,8 @@ export function extractStructure(text) {
     if (trim === "[ABSTRACT]") return { type: "摘要标题", text: "摘要", index };
     if (trim === "[ABSTRACT_EN]") return { type: "英文摘要标题", text: "Abstract", index };
     if (trim === "[REFERENCES]") return { type: "参考文献标题", text: "参考文献", index };
+    if (trim === "[ACKNOWLEDGEMENTS]") return { type: "致谢标题", text: "致谢", index };
+    if (/^\[APPENDIX\] /.test(trim)) return { type: "附录标题", text: trim.replace(/^\[APPENDIX\] /, ""), index };
 
     if (/^\[META\] /.test(trim)) return { type: "封面信息", text: trim.replace(/^\[META\] /, ""), index };
     if (/^\[KEYWORDS\] /.test(trim)) return { type: "关键词", text: trim.replace(/^\[KEYWORDS\] /, ""), index };
@@ -325,6 +346,18 @@ export function toHtml(text) {
     if (trim === "[REFERENCES]") {
       zone = "references";
       result.push(`<h2 class="section-title">参考文献</h2>`);
+      continue;
+    }
+
+    if (trim === "[ACKNOWLEDGEMENTS]") {
+      zone = "body";
+      result.push(`<h2 class="section-title">致谢</h2>`);
+      continue;
+    }
+
+    if (/^\[APPENDIX\] /.test(trim)) {
+      zone = "body";
+      result.push(`<h2 class="section-title">${escapeHtml(trim.replace(/^\[APPENDIX\] /, ""))}</h2>`);
       continue;
     }
 

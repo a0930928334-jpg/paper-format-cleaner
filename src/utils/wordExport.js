@@ -51,17 +51,42 @@ export function headingLabel(level, counters, scheme = "cn") {
   return `${ss}.`;
 }
 
-/** 把中间标签文本拆成论文各部分。 */
+/**
+ * 把中间标签文本拆成论文各部分。
+ * 参考文献、致谢、附录放进有序数组 backMatter，按原文顺序输出；
+ * paper.references 仍然是全部参考文献条目的列表。
+ */
 export function parsePaper(cleaned, scheme = "cn") {
-  const paper = { abstract: [], abstractEn: [], keywords: "", keywordsEn: "", body: [], references: [] };
+  const paper = { abstract: [], abstractEn: [], keywords: "", keywordsEn: "", body: [], references: [], backMatter: [] };
   const counters = [0, 0, 0];
   let zone = "preamble";
+  let blocks = paper.body; // 正文块写到哪里：正文，或者当前的后置部分
+  let numbered = true; // 致谢、附录里的小标题不编号
+  let refs = null;
+
+  const startPart = (part) => {
+    paper.backMatter.push(part);
+    blocks = part.blocks;
+    numbered = part.kind === "body" || part.kind === "references";
+  };
+  const referencesPart = () => refs || (refs = { kind: "references", title: "参考文献", items: [], blocks: [] });
+  const addReference = (text) => {
+    if (!text) return;
+    referencesPart().items.push(text);
+    paper.references.push(text);
+  };
 
   const heading = (level, title) => {
+    // 后置部分之后又出现一级标题：按原文位置接着输出正文
+    if (level === 1 && paper.backMatter.length) startPart({ kind: "body", blocks: [] });
+    zone = "body";
+    if (!numbered) {
+      blocks.push({ type: "heading", level, title, label: "" });
+      return;
+    }
     counters[level - 1] += 1;
     for (let i = level; i < 3; i++) counters[i] = 0;
-    paper.body.push({ type: "heading", level, title, label: headingLabel(level, counters, scheme) });
-    zone = "body";
+    blocks.push({ type: "heading", level, title, label: headingLabel(level, counters, scheme) });
   };
 
   for (const raw of cleaned.split("\n")) {
@@ -70,7 +95,12 @@ export function parsePaper(cleaned, scheme = "cn") {
 
     if (line === "[ABSTRACT]") { zone = "abstract"; continue; }
     if (line === "[ABSTRACT_EN]") { zone = "abstractEn"; continue; }
-    if (line === "[REFERENCES]") { zone = "references"; continue; }
+    if (line === "[REFERENCES]") {
+      if (!paper.backMatter.includes(referencesPart())) startPart(referencesPart());
+      zone = "references";
+      continue;
+    }
+    if (line === "[ACKNOWLEDGEMENTS]") { startPart({ kind: "acknowledgements", title: "致谢", blocks: [] }); zone = "back"; continue; }
 
     const tag = line.match(/^\[([A-Z_0-9]+)\] ?(.*)$/);
     if (tag) {
@@ -81,15 +111,16 @@ export function parsePaper(cleaned, scheme = "cn") {
       if (name === "H1") { heading(1, text); continue; }
       if (name === "H2") { heading(2, text); continue; }
       if (name === "H3") { heading(3, text); continue; }
-      if (name === "REF") { if (text) paper.references.push(text); continue; }
-      if (name === "TABLE_CAPTION") { paper.body.push({ type: "tableCaption", text }); zone = "body"; continue; }
-      if (name === "FIGURE_CAPTION") { paper.body.push({ type: "figureCaption", text }); zone = "body"; continue; }
-      if (name === "FORMULA") { paper.body.push({ type: "formula", text }); zone = "body"; continue; }
+      if (name === "REF") { addReference(text); continue; }
+      if (name === "APPENDIX") { startPart({ kind: "appendix", title: text || "附录", blocks: [] }); zone = "back"; continue; }
+      if (name === "TABLE_CAPTION") { blocks.push({ type: "tableCaption", text }); zone = "body"; continue; }
+      if (name === "FIGURE_CAPTION") { blocks.push({ type: "figureCaption", text }); zone = "body"; continue; }
+      if (name === "FORMULA") { blocks.push({ type: "formula", text }); zone = "body"; continue; }
       if (name === "TABLE") {
         const row = parseMarkdownTableRow(text);
-        const last = paper.body[paper.body.length - 1];
+        const last = blocks[blocks.length - 1];
         if (last && last.type === "table") last.rows.push(row);
-        else paper.body.push({ type: "table", rows: [row] });
+        else blocks.push({ type: "table", rows: [row] });
         zone = "body";
         continue;
       }
@@ -97,13 +128,15 @@ export function parsePaper(cleaned, scheme = "cn") {
 
     if (zone === "abstract") { paper.abstract.push(line); continue; }
     if (zone === "abstractEn") { paper.abstractEn.push(line); continue; }
-    if (zone === "references") { paper.references.push(line); continue; }
+    if (zone === "references") { addReference(line); continue; }
 
     // 去掉 AI 文本里常见的项目符号和行首编号，按正文段落处理
     const text = line.replace(/^[-•·]\s*/, "").replace(/^\d+[、.)．]\s*/, "").trim();
-    if (text) paper.body.push({ type: "paragraph", text });
+    if (text) blocks.push({ type: "paragraph", text });
   }
 
+  // 正文里零散的参考文献条目、但没有「参考文献」标题时，放在后置部分最前面
+  if (refs && !paper.backMatter.includes(refs)) paper.backMatter.unshift(refs);
   return paper;
 }
 
@@ -258,20 +291,28 @@ function abstractBlock(style, { title, label, paragraphs, placeholder, keywordLa
   return out;
 }
 
-function bodyBlocks(paper, style) {
-  const out = [];
-  const headingLevels = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3];
+const HEADING_LEVELS = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3];
 
-  for (const item of paper.body) {
+function headingParagraph(level, text) {
+  return new Paragraph({
+    heading: HEADING_LEVELS[level - 1],
+    indent: level === 3 ? { left: 0 } : undefined,
+    children: [new TextRun({ text })],
+  });
+}
+
+function headingText(item) {
+  if (!item.label) return item.title;
+  const sep = item.label.endsWith("、") || item.label.endsWith("）") ? "" : " ";
+  return `${item.label}${sep}${item.title}`;
+}
+
+/** 正文块（标题、段落、表格、图表题、公式）转成 Word 段落。 */
+function renderBlocks(items, style) {
+  const out = [];
+  for (const item of items) {
     if (item.type === "heading") {
-      const sep = item.label.endsWith("、") || item.label.endsWith("）") ? "" : " ";
-      out.push(
-        new Paragraph({
-          heading: headingLevels[item.level - 1],
-          indent: item.level === 3 ? { left: 0 } : undefined,
-          children: [new TextRun({ text: `${item.label}${sep}${item.title}` })],
-        })
-      );
+      out.push(headingParagraph(item.level, headingText(item)));
       continue;
     }
     if (item.type === "tableCaption") {
@@ -294,13 +335,24 @@ function bodyBlocks(paper, style) {
     }
     out.push(para(style, item.text, { indent: { firstLine: Number(style.firstLineIndent) } }));
   }
+  return out;
+}
 
-  if (paper.references.length) {
-    out.push(pageBreak());
-    out.push(new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: "参考文献" })] }));
-    paper.references.forEach((ref, i) => {
-      out.push(para(style, `[${i + 1}] ${ref}`, { indent: { left: 420, hanging: 420 }, size: 21 }));
-    });
+/** 正文，加上按原文顺序排列的参考文献、致谢、附录（各自另起一页，标题 1 样式，不编号）。 */
+function bodyBlocks(paper, style) {
+  const out = renderBlocks(paper.body, style);
+  let refNo = 0;
+  for (const part of paper.backMatter) {
+    if (part.kind === "body") {
+      out.push(...renderBlocks(part.blocks, style));
+      continue;
+    }
+    if (part.kind === "references" && !part.items.length && !part.blocks.length) continue;
+    out.push(pageBreak(), headingParagraph(1, part.title));
+    for (const ref of part.items || []) {
+      out.push(para(style, `[${++refNo}] ${ref}`, { indent: { left: 420, hanging: 420 }, size: 21 }));
+    }
+    out.push(...renderBlocks(part.blocks, style));
   }
   return out;
 }
