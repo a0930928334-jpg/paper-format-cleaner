@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { normalizeText, extractStructure, toHtml, getCss } from "./utils/cleaner";
+import { normalizeText, extractStructure, toHtml, getCss, htmlDocument } from "./utils/cleaner";
 import {
   analyzeDocumentMode,
   applyInputFallbacks,
@@ -214,7 +214,7 @@ export default function App() {
 
   async function downloadHtml() {
     const { saveAs } = await import("file-saver");
-    const page = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${info.title}</title><style>${getCss()}</style></head><body><div class="preview">${html}</div></body></html>`;
+    const page = htmlDocument(info.title, html);
     saveAs(new Blob([page], { type: "text/html;charset=utf-8" }), `${safeFileName(info.title)}.html`);
   }
 

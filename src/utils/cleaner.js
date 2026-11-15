@@ -8,7 +8,7 @@
  * 4. 标题只保留纯标题，编号交给 Word 导出阶段统一生成
  */
 
-function escapeHtml(str) {
+export function escapeHtml(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -487,6 +487,11 @@ export function toHtml(text, { numbering = "cn" } = {}) {
   }
 
   return result.join("\n");
+}
+
+/** 导出用的完整 HTML 页面，题目经过转义。 */
+export function htmlDocument(title, bodyHtml) {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${getCss()}</style></head><body><div class="preview">${bodyHtml}</div></body></html>`;
 }
 
 export function getCss() {
