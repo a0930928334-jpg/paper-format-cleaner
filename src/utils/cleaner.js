@@ -28,13 +28,36 @@ function stripHeadingNumber(text) {
     .trim();
 }
 
-function isMarkdownTableLine(line) {
+export function isMarkdownTableLine(line) {
   const t = line.trim();
   return /^\|.+\|$/.test(t);
 }
 
-function isMarkdownTableSeparator(line) {
+export function isMarkdownTableSeparator(line) {
   return /^\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim());
+}
+
+/**
+ * 去掉一行里的行内 Markdown，只保留文字。
+ * 斜体要求星号 / 下划线外侧不紧挨字母数字、内侧不是空格，避免误伤 a*b*c、y = a * b、snake_case；
+ * 加粗只要求开头外侧不紧挨字母数字，避免误伤 x**2。
+ */
+export function stripInlineMarkdown(line) {
+  let t = String(line ?? "");
+  if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(t)) return ""; // 分隔线 --- *** ___
+  if (/^\s*```/.test(t)) return ""; // 代码块围栏
+  const isTableRow = /^\s*\|.*\|\s*$/.test(t);
+  t = t.replace(/<br\s*\/?>/gi, isTableRow ? " " : "\n");
+  t = t.replace(/^(\s*)>(?:\s+|$)/, "$1");
+  t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
+  t = t.replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.|mailto:|#|\/)[^)\s]*\)/g, "$1");
+  t = t.replace(/`([^`\n]+)`/g, "$1");
+  t = t.replace(/~~([^\s~](?:[^~]*[^\s~])?)~~/g, "$1");
+  t = t.replace(/(^|[^A-Za-z0-9*])\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g, "$1$2");
+  t = t.replace(/(^|[^A-Za-z0-9_])__([^\s_](?:[^_]*[^\s_])?)__/g, "$1$2");
+  t = t.replace(/(^|[^A-Za-z0-9*])\*([^\s*](?:[^*]*[^\s*])?)\*(?![A-Za-z0-9*])/g, "$1$2");
+  t = t.replace(/(^|[^A-Za-z0-9_])_([^\s_](?:[^_]*[^\s_])?)_(?![A-Za-z0-9_])/g, "$1$2");
+  return t;
 }
 
 /** 去掉标题外面的包装：行首 #、首尾 ** / __ / 【】、行尾冒号和多余空格。 */
@@ -175,12 +198,13 @@ export function normalizeText(input) {
   let text = input || "";
 
   text = text.replace(/\r\n?/g, "\n");
+  text = text.split("\n").map(stripInlineMarkdown).join("\n");
   text = text.replace(/[ \t]+$/gm, "");
   text = text.replace(/\n{3,}/g, "\n\n");
   text = text.replace(/\u3000/g, " ");
-  text = text.replace(/\*\*(.+?)\*\*/g, "$1");
   text = text.replace(/^(#{1,6})([^#\s])/gm, "$1 $2");
   text = text.replace(/^[•·]\s*/gm, "- ");
+  text = text.replace(/^[*+]\s+/gm, "- ");
   text = text.replace(/^(\d+)[)）]\s*/gm, "$1. ");
 
   const lines = text.split("\n");

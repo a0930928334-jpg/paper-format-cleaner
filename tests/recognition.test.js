@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractStructure, normalizeText, sectionKeyword, toHtml } from "../src/utils/cleaner.js";
+import { extractStructure, normalizeText, sectionKeyword, stripInlineMarkdown, toHtml } from "../src/utils/cleaner.js";
 import { applyInputFallbacks } from "../src/utils/paper.js";
 import { parsePaper } from "../src/utils/wordExport.js";
 
@@ -184,4 +184,36 @@ test("网页预览的列表序号和 Word 一致", () => {
   assert.ok(cn.includes('<p class="body-para">2024.5 月份数据</p>'));
   assert.ok(toHtml(cleaned, { numbering: "arabic" }).includes('<p class="list-item">(1) 第一点</p>'));
   assert.equal(extractStructure(cleaned).filter((x) => x.type === "编号列表").length, 4);
+});
+
+/* ---------- 问题 7：行内 Markdown ---------- */
+
+test("stripInlineMarkdown 去掉加粗、斜体、代码、删除线、链接、图片、引用和分隔线", () => {
+  const cases = [
+    ["这是**重点**内容", "这是重点内容"],
+    ["这是__重点__内容", "这是重点内容"],
+    ["这是*斜体*文字", "这是斜体文字"],
+    ["这是_斜体_文字", "这是斜体文字"],
+    ["运行 `npm test` 即可", "运行 npm test 即可"],
+    ["~~删掉~~保留", "删掉保留"],
+    ["详见[官方文档](https://example.com/docs)。", "详见官方文档。"],
+    ["![架构图](https://example.com/a.png)", ""],
+    ["> 引用的一段话", "引用的一段话"],
+    ["---", ""],
+    ["***", ""],
+    ["第一行<br>第二行", "第一行\n第二行"],
+    ["| 第一行<br>第二行 | 值 |", "| 第一行 第二行 | 值 |"],
+    ["**关键词：**AI", "关键词：AI"],
+  ];
+  for (const [input, expected] of cases) assert.equal(stripInlineMarkdown(input), expected, input);
+});
+
+test("斜体规则不误伤乘号、变量名和文件名", () => {
+  for (const text of ["y = a * b * c", "a*b*c", "file_name_v2.py", "snake_case_var", "x**2 + y**2", "loss = -sum(y * log(p))"]) {
+    assert.equal(stripInlineMarkdown(text), text);
+  }
+});
+
+test("normalizeText 清理行内 Markdown，* 项目符号统一成 -", () => {
+  assert.deepEqual(tags("一、引言\n这是*斜体*和`代码`，详见[链接](https://a.com)。\n---\n* 要点一"), ["[H1] 引言", "这是斜体和代码，详见链接。", "- 要点一"]);
 });

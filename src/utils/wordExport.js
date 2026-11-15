@@ -28,7 +28,7 @@ import {
   VerticalAlign,
   WidthType,
 } from "docx";
-import { listItemText } from "./cleaner.js";
+import { isMarkdownTableLine, isMarkdownTableSeparator, listItemText, stripInlineMarkdown } from "./cleaner.js";
 import { parseMarkdownTableRow, UNTITLED } from "./paper.js";
 
 const CN_NUMS = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五"];
@@ -433,27 +433,48 @@ const LETTER_LINE = /^(Dear\b|Sincerely|Best regards|Kind regards|To:|Subject:|R
 
 export function buildGenericDocument(rawText, titleHint, style) {
   let lines = String(rawText || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map(stripInlineMarkdown)
+    .join("\n")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "" && line.toLowerCase() !== "documents:");
 
+  const firstLine = (lines[0] || "").replace(/^#{1,6}\s+/, "");
   let title = titleHint && titleHint !== UNTITLED ? titleHint : "";
-  if (!title) title = lines[0] && lines[0].length <= 120 ? lines[0] : "清洗后的文档";
-  if (lines[0] === title) lines = lines.slice(1);
+  if (!title) title = firstLine && firstLine.length <= 120 ? firstLine : "清洗后的文档";
+  if (firstLine === title) lines = lines.slice(1);
 
   const children = [
     para(style, [{ text: title, bold: true, size: style.headingSize, cjkFont: style.headingFont }], { align: AlignmentType.CENTER, spacing: { after: 420 } }),
   ];
+  const headingRun = (text) => [{ text, bold: true, size: style.smallHeadingSize, cjkFont: style.headingFont }];
+  const headingSpacing = { before: 260, after: 160 };
 
-  for (const line of lines) {
-    if (/^[IVX]+\.\s+/.test(line) || /^#{1,3}\s+/.test(line)) {
-      children.push(para(style, [{ text: line.replace(/^#{1,3}\s+/, ""), bold: true, size: style.smallHeadingSize, cjkFont: style.headingFont }], { align: AlignmentType.LEFT, spacing: { before: 260, after: 160 } }));
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const md = line.match(/^(#{1,6})\s+(.+)$/);
+    if (isMarkdownTableLine(line)) {
+      // 连续的 Markdown 表格行合成一张三线表
+      const rows = [];
+      for (; i < lines.length && isMarkdownTableLine(lines[i]); i++) {
+        if (!isMarkdownTableSeparator(lines[i])) rows.push(parseMarkdownTableRow(lines[i]));
+      }
+      i--;
+      const table = threeLineTable(rows, style);
+      if (table) children.push(table, blank(160));
+    } else if (md) {
+      const level = Math.min(3, md[1].length);
+      children.push(para(style, headingRun(md[2]), { heading: HEADING_LEVELS[level - 1], align: AlignmentType.LEFT, spacing: headingSpacing }));
+    } else if (/^[IVX]+\.\s+/.test(line)) {
+      children.push(para(style, headingRun(line), { align: AlignmentType.LEFT, spacing: headingSpacing }));
     } else if (LETTER_LINE.test(line)) {
       children.push(para(style, line, { align: AlignmentType.LEFT, spacing: { after: 140 } }));
     } else if (/[:：]$/.test(line) && line.length <= 100) {
       children.push(para(style, [{ text: line, bold: true }], { align: AlignmentType.LEFT, spacing: { before: 180, after: 100 } }));
     } else {
-      children.push(para(style, line.replace(/^[-•·]\s*/, ""), { indent: { firstLine: Number(style.firstLineIndent) } }));
+      children.push(para(style, line.replace(/^(?:[-*+]\s+|[•·]\s*)/, ""), { indent: { firstLine: Number(style.firstLineIndent) } }));
     }
   }
 

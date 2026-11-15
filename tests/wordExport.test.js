@@ -94,3 +94,16 @@ test("致谢、附录另起一页，用标题 1 样式但不编号，并按原�
   assert.ok(!paras.some((p) => /^[一二三四五六七八九十]+、(致谢|附录)/.test(p.text)), "致谢、附录没有章节编号");
   assert.ok(at("感谢导师。") > at("致谢"), "致谢正文跟在致谢标题后");
 });
+
+test("普通文档模式清理 Markdown：# 标题用标题样式，表格输出为三线表", async () => {
+  const raw = "# 周报\n本周**完成**了`排版`工具，详见[文档](https://a.com)。\n## 进展\n| 项目 | 状态 |\n| --- | --- |\n| A | 完成 |\n* 下周计划";
+  const { doc, title } = buildGenericDocument(raw, "", DEFAULT_STYLE);
+  assert.equal(title, "周报");
+  const { document } = await unzip(doc);
+  const paras = paragraphs(document);
+  assert.ok(paras.some((p) => p.style === "Heading2" && p.text === "进展"), "## 用标题 2 样式");
+  assert.ok(paras.some((p) => p.text === "本周完成了排版工具，详见文档。"));
+  assert.ok(paras.some((p) => p.text === "下周计划"));
+  assert.ok(document.includes("<w:tbl>"), "表格是 Word 表格");
+  for (const leftover of ["#", "**", "`", "](", "| --- |"]) assert.ok(!paras.some((p) => p.text.includes(leftover)), `没有残留 ${leftover}`);
+});
