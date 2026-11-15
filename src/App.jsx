@@ -11,6 +11,7 @@ import {
   safeFileName,
 } from "./utils/paper";
 import { analyzeTemplateText, DEFAULT_STYLE } from "./utils/templateRules";
+import { pdfItemsToText, reflowLines } from "./utils/fileText";
 import { SAMPLE_TEXT } from "./sample";
 
 const DEFAULT_COVER = {
@@ -101,9 +102,10 @@ async function readFileAsText(file, { maxPdfPages } = {}) {
     const last = Math.min(pdf.numPages, maxPdfPages || pdf.numPages);
     for (let i = 1; i <= last; i++) {
       const content = await (await pdf.getPage(i)).getTextContent();
-      pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+      pages.push(pdfItemsToText(content.items));
     }
-    return pages.join("\n\n");
+    // 页之间用换页符分隔，重排时据此删页码、把跨页的段落接上
+    return reflowLines(pages.join("\f"));
   }
 
   throw new Error("只支持 .docx、.pdf、.txt 文件");
