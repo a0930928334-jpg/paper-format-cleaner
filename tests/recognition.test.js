@@ -269,3 +269,13 @@ test("没有（一）时（1）仍按二级标题；新的一章重新判断", (
   assert.deepEqual(tags("一、引言\n（1）研究背景"), ["[H1] 引言", "[H2] 研究背景"]);
   assert.deepEqual(tags("一、引言\n（一）背景\n（1）要点\n二、方法\n（1）总体设计"), ["[H1] 引言", "[H2] 背景", "（1）要点", "[H1] 方法", "[H2] 总体设计"]);
 });
+
+/* ---------- 补充：__x__ 加粗 ---------- */
+
+test("__x__ 只在内容含中文或空格时去掉下划线，__init__、__name__ 保持原样", () => {
+  assert.equal(stripInlineMarkdown("这是__重点__内容"), "这是重点内容");
+  assert.equal(stripInlineMarkdown("__bold text__ here"), "bold text here");
+  for (const text of ["__init__", "调用 __init__ 方法", "if __name__ == '__main__':", "self.__dict__"]) {
+    assert.equal(stripInlineMarkdown(text), text);
+  }
+});

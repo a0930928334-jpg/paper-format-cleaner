@@ -54,7 +54,8 @@ export function stripInlineMarkdown(line) {
   t = t.replace(/`([^`\n]+)`/g, "$1");
   t = t.replace(/~~([^\s~](?:[^~]*[^\s~])?)~~/g, "$1");
   t = t.replace(/(^|[^A-Za-z0-9*])\*\*([^\s*](?:[^*]*[^\s*])?)\*\*/g, "$1$2");
-  t = t.replace(/(^|[^A-Za-z0-9_])__([^\s_](?:[^_]*[^\s_])?)__/g, "$1$2");
+  // __x__ 只在内容含中文或空格时当加粗，__init__、__name__ 这类 Python 名字保持原样
+  t = t.replace(/(^|[^A-Za-z0-9_])__([^\s_](?:[^_]*[^\s_])?)__/g, (m, pre, body) => (/[一-龥\s]/.test(body) ? pre + body : m));
   t = t.replace(/(^|[^A-Za-z0-9*])\*([^\s*](?:[^*]*[^\s*])?)\*(?![A-Za-z0-9*])/g, "$1$2");
   t = t.replace(/(^|[^A-Za-z0-9_])_([^\s_](?:[^_]*[^\s_])?)_(?![A-Za-z0-9_])/g, "$1$2");
   return t;
