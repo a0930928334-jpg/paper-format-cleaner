@@ -37,6 +37,88 @@ function isMarkdownTableSeparator(line) {
   return /^\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim());
 }
 
+/** 去掉标题外面的包装：行首 #、首尾 ** / __ / 【】、行尾冒号和多余空格。 */
+export function bareHeading(line) {
+  let t = String(line || "").trim().replace(/^#{1,6}\s*/, "");
+  for (let i = 0; i < 2; i++) {
+    t = t.replace(/[:：]\s*$/, "").trim();
+    t = t.replace(/^(\*\*|__)(.+)\1$/, "$2").trim();
+    t = t.replace(/^【(.+)】$/, "$1").trim();
+  }
+  return t.replace(/\s+/g, " ");
+}
+
+const SECTION_PATTERNS = [
+  ["abstract", /^(中文)?摘\s*要$/],
+  ["abstractEn", /^abstract$/i],
+  ["references", /^(参\s*考\s*文\s*献|references|bibliography)$/i],
+  ["acknowledgements", /^(致\s*谢|acknowledge?ments?)$/i],
+  // 附录可以带编号和短标题：附录A 调查问卷、Appendix A: Questionnaire
+  ["appendix", /^(附\s*录|appendix)(\s*([A-Z]|\d{1,2}|[一二三四五六七八九十]{1,2}))?([\s:：.、．]+[^。，；！？,.;!?]{1,30})?$/i],
+];
+
+/**
+ * 判断一行是不是特殊章节名。normalizeText 和 applyInputFallbacks 共用，保证两边规则一致。
+ * 返回 abstract | abstractEn | references | acknowledgements | appendix | null
+ */
+export function sectionKeyword(line) {
+  const bare = bareHeading(line);
+  if (!bare || bare.length > 40) return null;
+  const hit = SECTION_PATTERNS.find(([, re]) => re.test(bare));
+  return hit ? hit[0] : null;
+}
+
+const KEYWORDS_CN = /^(?:【\s*关\s*键\s*词\s*】|关\s*键\s*词\s*[:：]?)\s*(.*)$/;
+const KEYWORDS_EN = /^key\s*words?\s*[:：]?\s*(.*)$/i;
+
+/** 关键词行：返回 { lang: "cn" | "en", text }，不是关键词行返回 null。 */
+export function keywordsOf(line) {
+  const t = String(line || "").replace(/\*\*|__/g, "").trim();
+  const cn = t.match(KEYWORDS_CN);
+  if (cn) return { lang: "cn", text: cn[1].trim() };
+  const en = t.match(KEYWORDS_EN);
+  if (en) return { lang: "en", text: en[1].trim() };
+  return null;
+}
+
+/** 按编号判断标题级别，没有编号返回 null。 */
+function numberedLevel(t) {
+  if (/^\d+\.\d+\.\d+\s+\S/.test(t)) return 3;
+  if (/^[（(][一二三四五六七八九十\d]+[）)]\s*\S/.test(t) || /^\d+\.\d+\s+\S/.test(t)) return 2;
+  if (
+    /^第\s*[\d一二三四五六七八九十百]+\s*[章节]\s+\S/.test(t) ||
+    new RegExp(`^[${CN}]+[、.．]\\s*\\S`).test(t) ||
+    new RegExp(`^[${CN}]+\\s+[^\\d\\s]`).test(t)
+  ) {
+    return 1;
+  }
+  return null;
+}
+
+// Markdown 标题里的「1. 引言」「1 引言」：行首有 # 已经确定是标题，按一级标题处理
+const MD_CHAPTER = /^\d{1,2}(?:[.．、]\s*|\s+)(?=[^\d\s])/;
+
+/** 题目单独占了 #、章节都从 ## 开始时，把 Markdown 标题整体提升，最高一级对应一级标题。 */
+function markdownShift(lines) {
+  let min = 7;
+  for (const line of lines) {
+    const md = line.trim().match(/^(#{1,6})\s+\S/);
+    if (md && !sectionKeyword(line)) min = Math.min(min, md[1].length);
+  }
+  return min <= 6 ? min - 1 : 0;
+}
+
+/** 识别标题，返回 { level, text }，不是标题返回 null。编号优先于 # 的个数。 */
+function headingOf(line, shift) {
+  const md = line.match(/^(#{1,6})\s+(.+)$/);
+  const t = md ? md[2].trim() : line;
+  const level = numberedLevel(t);
+  if (level) return { level, text: stripHeadingNumber(t) };
+  if (!md) return null;
+  if (MD_CHAPTER.test(t)) return { level: 1, text: t.replace(MD_CHAPTER, "").trim() };
+  return { level: Math.min(3, Math.max(1, md[1].length - shift)), text: t };
+}
+
 export function normalizeText(input) {
   let text = input || "";
 
@@ -51,6 +133,7 @@ export function normalizeText(input) {
 
   const lines = text.split("\n");
   const out = [];
+  const shift = markdownShift(lines);
 
   const META_KEYS =
     /^(学校|院校|论文题目|题目|英文题目|英文标题|专业|班级|学号|姓名|日期)[:：]/;
@@ -70,31 +153,27 @@ export function normalizeText(input) {
       continue;
     }
 
-    if (/^摘\s*要\s*[:：]?\s*$/.test(trim)) {
+    const section = sectionKeyword(trim);
+
+    if (section === "abstract") {
       inReferences = false;
       out.push("[ABSTRACT]");
       continue;
     }
 
-    if (/^Abstract\s*[:：]?\s*$/i.test(trim)) {
+    if (section === "abstractEn") {
       inReferences = false;
       out.push("[ABSTRACT_EN]");
       continue;
     }
 
-    if (/^关\s*键\s*词\s*[:：]?\s*/.test(trim)) {
-      const kw = trim.replace(/^关\s*键\s*词\s*[:：]?\s*/, "").trim();
-      out.push(`[KEYWORDS] ${kw}`);
+    const keywords = keywordsOf(trim);
+    if (keywords) {
+      out.push(`${keywords.lang === "en" ? "[KEYWORDS_EN]" : "[KEYWORDS]"} ${keywords.text}`);
       continue;
     }
 
-    if (/^Keywords?\s*[:：]?\s*/i.test(trim)) {
-      const kw = trim.replace(/^Keywords?\s*[:：]?\s*/i, "").trim();
-      out.push(`[KEYWORDS_EN] ${kw}`);
-      continue;
-    }
-
-    if (/^参考文献\s*$/.test(trim)) {
+    if (section === "references") {
       inReferences = true;
       out.push("[REFERENCES]");
       continue;
@@ -140,36 +219,9 @@ export function normalizeText(input) {
       continue;
     }
 
-    const isH3 =
-      /^\d+\.\d+\.\d+\s+\S/.test(trim) ||
-      /^###\s+/.test(trim);
-
-    if (isH3) {
-      const pure = stripHeadingNumber(trim.replace(/^###\s+/, ""));
-      out.push(`[H3] ${pure}`);
-      continue;
-    }
-
-    const isH2 =
-      /^[（(][一二三四五六七八九十\d]+[）)]\s*\S/.test(trim) ||
-      /^\d+\.\d+\s+\S/.test(trim) ||
-      /^##\s+/.test(trim);
-
-    if (isH2) {
-      const pure = stripHeadingNumber(trim.replace(/^##\s+/, ""));
-      out.push(`[H2] ${pure}`);
-      continue;
-    }
-
-    const isH1 =
-      /^第\s*[\d一二三四五六七八九十百]+\s*[章节]\s+\S/.test(trim) ||
-      new RegExp(`^[${CN}]+[、.．]\\s*\\S`).test(trim) ||
-      new RegExp(`^[${CN}]+\\s+[^\\d\\s]`).test(trim) ||
-      /^#\s+/.test(trim);
-
-    if (isH1) {
-      const pure = stripHeadingNumber(trim.replace(/^#\s+/, ""));
-      out.push(`[H1] ${pure}`);
+    const heading = headingOf(trim, shift);
+    if (heading) {
+      out.push(`[H${heading.level}] ${heading.text}`);
       continue;
     }
 

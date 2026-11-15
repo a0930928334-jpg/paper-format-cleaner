@@ -2,6 +2,7 @@
  * 论文结构相关的纯函数：封面信息解析、输入兜底、文档模式判断和导出前检查。
  * 这些函数不依赖浏览器或 React，可以直接用 node --test 测试。
  */
+import { keywordsOf, sectionKeyword } from "./cleaner.js";
 
 export const DEFAULT_SCHOOL = "浙江工商大学";
 export const UNTITLED = "未命名论文";
@@ -85,13 +86,22 @@ export function applyInputFallbacks(rawText) {
 
   if (!hasPaperSignal) return text;
 
+  const isAbstractStart = (line) => sectionKeyword(line) === "abstract";
   const hasTitle = lines.some((line) => /^(论文题目|题目)[:：]/.test(line));
-  const hasAbstract = lines.some((line) => /^摘\s*要\s*[:：]?$/.test(line));
-  const hasKeywords = lines.some((line) => /^关\s*键\s*词/.test(line));
+  const hasAbstract = lines.some(isAbstractStart);
+  const hasKeywords = lines.some((line) => keywordsOf(line)?.lang === "cn");
 
-  if (!hasTitle && lines.length > 0) {
-    const first = lines[0];
-    if (first.length <= 80 && !META_LINE.test(first) && !/^(摘\s*要|关\s*键\s*词|Abstract)/i.test(first) && !CHAPTER_LINE.test(first)) {
+  // 第一行是「# 题目」时去掉 #；「## xxx」更像章节，不当题目
+  if (!hasTitle && lines.length > 0 && !/^#{2,}/.test(lines[0])) {
+    const first = lines[0].replace(/^#\s+/, "");
+    if (
+      first.length <= 80 &&
+      !META_LINE.test(first) &&
+      !sectionKeyword(first) &&
+      !keywordsOf(first) &&
+      !/^(摘\s*要|Abstract)/i.test(first) &&
+      !CHAPTER_LINE.test(first)
+    ) {
       lines[0] = `论文题目：${first}`;
     }
   }
@@ -102,7 +112,8 @@ export function applyInputFallbacks(rawText) {
         line.length >= 40 &&
         !META_LINE.test(line) &&
         !CHAPTER_LINE.test(line) &&
-        !/^参考文献/.test(line)
+        !/^#/.test(line) &&
+        !sectionKeyword(line)
     );
 
     if (firstLongIndex !== -1) {
@@ -112,7 +123,7 @@ export function applyInputFallbacks(rawText) {
       lines.splice(1, 0, "摘要", "请填写摘要内容。", "关键词：");
     }
   } else if (!hasKeywords) {
-    const abstractIndex = lines.findIndex((line) => /^摘\s*要\s*[:：]?$/.test(line));
+    const abstractIndex = lines.findIndex(isAbstractStart);
     lines.splice(abstractIndex + 2, 0, "关键词：");
   }
 
