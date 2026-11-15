@@ -34,13 +34,38 @@ const PAGE_NUMBER_AT_EDGE = [/^\d{1,4}$/, /^[ivxlc]{1,6}$/i, /^\d{1,4}\s*[/／]\
 const isPageNumber = (line) => PAGE_NUMBER.some((re) => re.test(line));
 const isEdgePageNumber = (line) => isPageNumber(line) || PAGE_NUMBER_AT_EDGE.some((re) => re.test(line));
 
-/** 按换页符拆页，去掉页首页尾的页码行和每页首尾的空行。 */
+/** 反复去掉页首页尾满足条件的行。 */
+function trimEdges(lines, isJunk) {
+  while (lines.length && isJunk(lines[0])) lines.shift();
+  while (lines.length && isJunk(lines[lines.length - 1])) lines.pop();
+  return lines;
+}
+
+// 页眉页脚按「数字忽略」比较：每页的页码不同也算同一行
+const edgeKey = (line) => line.replace(/\d+/g, "#");
+
+/** 至少 3 页、并且一半以上页面的首行或末行相同，才当页眉页脚。 */
+function runningLines(pages) {
+  if (pages.length < 3) return new Set();
+  const counts = new Map();
+  for (const lines of pages) {
+    const edges = new Set([lines[0], lines[lines.length - 1]].filter(Boolean).map(edgeKey));
+    for (const key of edges) counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return new Set([...counts].filter(([, n]) => n >= 3 && n >= pages.length / 2).map(([key]) => key));
+}
+
+/** 按换页符拆页，去掉页首页尾的页码、重复的页眉页脚和空行。 */
 function pageLines(text) {
+  const blankOrNumber = (line) => line === "" || isEdgePageNumber(line);
+  const pages = String(text || "")
+    .replace(/\r\n?/g, "\n")
+    .split("\f")
+    .map((page) => trimEdges(page.split("\n").map((line) => line.trim()), blankOrNumber));
+  const running = runningLines(pages);
   const out = [];
-  for (const page of String(text || "").replace(/\r\n?/g, "\n").split("\f")) {
-    const lines = page.split("\n").map((line) => line.trim());
-    while (lines.length && (lines[0] === "" || isEdgePageNumber(lines[0]))) lines.shift();
-    while (lines.length && (lines[lines.length - 1] === "" || isEdgePageNumber(lines[lines.length - 1]))) lines.pop();
+  for (const lines of pages) {
+    trimEdges(lines, (line) => blankOrNumber(line) || running.has(edgeKey(line)));
     out.push(...lines.filter((line) => !isPageNumber(line)));
   }
   return out;
