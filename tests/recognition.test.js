@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { extractStructure, normalizeText, sectionKeyword, toHtml } from "../src/utils/cleaner.js";
 import { applyInputFallbacks } from "../src/utils/paper.js";
+import { parsePaper } from "../src/utils/wordExport.js";
 
 const tags = (text) => normalizeText(text).split("\n").filter(Boolean);
 const pipeline = (text) => tags(applyInputFallbacks(text));
@@ -158,4 +159,29 @@ test("结构识别结果和预览都支持致谢、附录", () => {
   assert.ok(html.includes('<h2 class="section-title">致谢</h2>'));
   assert.ok(html.includes('<h2 class="section-title">附录A 调查问卷</h2>'));
   assert.ok(html.includes('<p class="body-para">感谢导师的指导。</p>'), "致谢正文不是参考文献条目");
+});
+
+/* ---------- 问题 6：正文开头的数字 ---------- */
+
+const LIST_INPUT = "一、引言\n3.5倍的效率提升来自于自动化。\n3.5 倍的效率提升来自于自动化。\n2024.5 月份数据\n1. 第一点\n2、第二点\n3）第三点\n4.第四点\n- 要点\n• 另一个要点";
+const paragraphTexts = (scheme) =>
+  parsePaper(normalizeText(LIST_INPUT), scheme).body.filter((b) => b.type === "paragraph").map((b) => b.text);
+
+test("小数、年份开头的正文原样保留，不当标题也不删数字", () => {
+  assert.deepEqual(paragraphTexts("cn").slice(0, 3), ["3.5倍的效率提升来自于自动化。", "3.5 倍的效率提升来自于自动化。", "2024.5 月份数据"]);
+});
+
+test("列表项保留序号：cn 方案用（1），arabic 方案用 (1)，项目符号去掉", () => {
+  assert.deepEqual(paragraphTexts("cn").slice(3), ["（1）第一点", "（2）第二点", "（3）第三点", "（4）第四点", "要点", "另一个要点"]);
+  assert.deepEqual(paragraphTexts("arabic").slice(3, 7), ["(1) 第一点", "(2) 第二点", "(3) 第三点", "(4) 第四点"]);
+});
+
+test("网页预览的列表序号和 Word 一致", () => {
+  const cleaned = normalizeText(LIST_INPUT);
+  const cn = toHtml(cleaned, { numbering: "cn" });
+  assert.ok(cn.includes('<p class="list-item">（1）第一点</p>'));
+  assert.ok(cn.includes('<p class="list-item">（4）第四点</p>'));
+  assert.ok(cn.includes('<p class="body-para">2024.5 月份数据</p>'));
+  assert.ok(toHtml(cleaned, { numbering: "arabic" }).includes('<p class="list-item">(1) 第一点</p>'));
+  assert.equal(extractStructure(cleaned).filter((x) => x.type === "编号列表").length, 4);
 });

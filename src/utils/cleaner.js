@@ -120,10 +120,23 @@ function looksLikeEquation(line, cjkCount) {
   return /=/.test(line) && line.length <= 90 && !/[。！？，；]/.test(line) && cjkCount <= 10 && words <= 3 && !/\.$/.test(line);
 }
 
+// 列表项：1、 1) 1） 1. 1．（点后面不能紧跟数字，排除 3.5 这种小数）
+const LIST_ITEM = /^(\d+)(?:[、)）]|[.．](?!\d))\s*(\S.*)$/;
+
+/** 列表项统一成论文常用序号：cn 方案用（1），arabic 方案用 (1)。不是列表项返回 null。 */
+export function listItemText(line, scheme = "cn") {
+  const m = String(line || "").trim().match(LIST_ITEM);
+  if (!m) return null;
+  return scheme === "arabic" ? `(${m[1]}) ${m[2]}` : `（${m[1]}）${m[2]}`;
+}
+
+// 带编号的二、三级标题要像标题：不太长、没有句末标点（排除「3.5 倍的效率……。」「2024.5 月份」）
+const shortTitle = (t) => t.length <= 40 && !/[。！？；]/.test(t);
+
 /** 按编号判断标题级别，没有编号返回 null。 */
 function numberedLevel(t) {
-  if (/^\d+\.\d+\.\d+\s+\S/.test(t)) return 3;
-  if (/^[（(][一二三四五六七八九十\d]+[）)]\s*\S/.test(t) || /^\d+\.\d+\s+\S/.test(t)) return 2;
+  if (/^\d{1,2}\.\d{1,2}\.\d{1,2}\s+\S/.test(t) && shortTitle(t)) return 3;
+  if ((/^[（(][一二三四五六七八九十\d]+[）)]\s*\S/.test(t) || /^\d{1,2}\.\d{1,2}\s+\S/.test(t)) && shortTitle(t)) return 2;
   if (
     /^第\s*[\d一二三四五六七八九十百]+\s*[章节]\s+\S/.test(t) ||
     new RegExp(`^[${CN}]+[、.．]\\s*\\S`).test(t) ||
@@ -314,7 +327,7 @@ export function extractStructure(text) {
     if (/^\[TABLE\] /.test(trim)) return { type: "表格行", text: trim.replace(/^\[TABLE\] /, ""), index };
     if (/^\[FORMULA\] /.test(trim)) return { type: "公式", text: trim.replace(/^\[FORMULA\] /, ""), index };
 
-    if (/^\d+\.\s+/.test(trim)) return { type: "编号列表", text: trim, index };
+    if (listItemText(trim)) return { type: "编号列表", text: trim, index };
     if (/^-\s+/.test(trim)) return { type: "项目符号", text: trim, index };
     if (trim === "") return { type: "空行", text: "", index };
 
@@ -322,7 +335,8 @@ export function extractStructure(text) {
   });
 }
 
-export function toHtml(text) {
+/** 网页预览。numbering 和 Word 导出的编号方式一致，用来显示列表序号。 */
+export function toHtml(text, { numbering = "cn" } = {}) {
   const lines = text.split("\n");
   const result = [];
 
@@ -432,8 +446,9 @@ export function toHtml(text) {
       continue;
     }
 
-    if (/^\d+\.\s+/.test(trim)) {
-      result.push(`<p class="list-item">${escapeHtml(trim)}</p>`);
+    const listItem = listItemText(trim, numbering);
+    if (listItem) {
+      result.push(`<p class="list-item">${escapeHtml(listItem)}</p>`);
       continue;
     }
 

@@ -28,6 +28,7 @@ import {
   VerticalAlign,
   WidthType,
 } from "docx";
+import { listItemText } from "./cleaner.js";
 import { parseMarkdownTableRow, UNTITLED } from "./paper.js";
 
 const CN_NUMS = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二", "十三", "十四", "十五"];
@@ -130,9 +131,9 @@ export function parsePaper(cleaned, scheme = "cn") {
     if (zone === "abstractEn") { paper.abstractEn.push(line); continue; }
     if (zone === "references") { addReference(line); continue; }
 
-    // 去掉 AI 文本里常见的项目符号和行首编号，按正文段落处理
-    const text = line.replace(/^[-•·]\s*/, "").replace(/^\d+[、.)．]\s*/, "").trim();
-    if (text) blocks.push({ type: "paragraph", text });
+    // 项目符号去掉；列表项保留序号并统一格式；小数、年份开头的正文原样保留
+    const text = line.replace(/^(?:-\s+|[•·]\s*)/, "").trim();
+    if (text) blocks.push({ type: "paragraph", text: listItemText(text, scheme) ?? text });
   }
 
   // 正文里零散的参考文献条目、但没有「参考文献」标题时，放在后置部分最前面

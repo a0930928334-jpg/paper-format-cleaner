@@ -139,7 +139,7 @@ export default function App() {
   const smartInput = useMemo(() => applyInputFallbacks(input), [input]);
   const cleaned = useMemo(() => normalizeText(smartInput), [smartInput]);
   const structure = useMemo(() => extractStructure(cleaned), [cleaned]);
-  const html = useMemo(() => toHtml(cleaned), [cleaned]);
+  const html = useMemo(() => toHtml(cleaned, { numbering }), [cleaned, numbering]);
   const autoMeta = useMemo(() => parseMeta(cleaned), [cleaned]);
   const mode = useMemo(() => analyzeDocumentMode(smartInput, cleaned), [smartInput, cleaned]);
   const info = useMemo(() => buildPreviewInfo(cleaned, mergeMeta(cover, autoMeta)), [cleaned, cover, autoMeta]);
