@@ -226,3 +226,29 @@ test("前面没有二级标题的三级标题提升为二级标题，arabic 方�
   const labels = parsePaper(cleaned, "arabic").body.map((b) => b.label);
   assert.deepEqual(labels, ["1", "1.1", "1.2", "1.2.1", "2", "2.1"]);
 });
+
+/* ---------- 问题 12：英文和理工科的一级标题写法 ---------- */
+
+test("「1 引言」「2 Related Work」按连续编号识别为一级标题", () => {
+  assert.deepEqual(tags("1 引言\n正文。\n1.1 研究背景\n2 Related Work\n正文。\n3 系统设计"), [
+    "[H1] 引言",
+    "正文。",
+    "[H2] 研究背景",
+    "[H1] Related Work",
+    "正文。",
+    "[H1] 系统设计",
+  ]);
+});
+
+test("「Chapter 1 Introduction」识别为一级标题", () => {
+  assert.deepEqual(tags("Chapter 1 Introduction\nChapter 2: Related Work"), ["[H1] Introduction", "[H1] Related Work"]);
+});
+
+test("数字开头的正文不当一级标题：编号不连续、量词、年份、句子", () => {
+  assert.deepEqual(tags("一、引言\n3 个模块分别承担数据清洗、识别和导出。"), ["[H1] 引言", "3 个模块分别承担数据清洗、识别和导出。"]);
+  assert.deepEqual(tags("一、引言\n3 个模块分别承担清洗识别导出"), ["[H1] 引言", "3 个模块分别承担清洗识别导出"]);
+  assert.deepEqual(tags("2024 年数据显示，用户增长明显。"), ["2024 年数据显示，用户增长明显。"]);
+  assert.deepEqual(tags("2 Related Work"), ["2 Related Work"], "第一个必须是 1");
+  assert.deepEqual(tags("1 引言\n3 系统设计"), ["[H1] 引言", "3 系统设计"], "跳号不算");
+  assert.deepEqual(tags("1 引言\n2 We propose a new method."), ["[H1] 引言", "2 We propose a new method."], "带句号的是句子");
+});

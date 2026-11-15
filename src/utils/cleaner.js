@@ -170,6 +170,17 @@ function numberedLevel(t) {
   return null;
 }
 
+const CHAPTER_EN = /^chapter\s+(\d{1,2})\s*[:：.]?\s+(\S.*)$/i;
+// 「1 引言」「2 Related Work」：短标题、没有句读、不以量词开头（排除「3 个模块……」）
+const NUMBERED_CHAPTER = /^(\d{1,2})\s+([^\d\s个种项次类条位名年月日天岁倍组篇份台张步%％].*)$/;
+
+/** 「1 引言」这种写法的编号和标题；不像标题返回 null。是否连续由调用方判断。 */
+function numberedChapter(line) {
+  const m = line.match(NUMBERED_CHAPTER);
+  if (!m || m[2].length > 30 || /[。，；！？,.;!?：:]/.test(m[2])) return null;
+  return { n: Number(m[1]), text: m[2].trim() };
+}
+
 // Markdown 标题里的「1. 引言」「1 引言」：行首有 # 已经确定是标题，按一级标题处理
 const MD_CHAPTER = /^\d{1,2}(?:[.．、]\s*|\s+)(?=[^\d\s])/;
 
@@ -189,6 +200,8 @@ function headingOf(line, shift) {
   const t = md ? md[2].trim() : line;
   const level = numberedLevel(t);
   if (level) return { level, text: stripHeadingNumber(t) };
+  const chapter = t.match(CHAPTER_EN);
+  if (chapter) return { level: 1, text: chapter[2].trim() };
   if (!md) return null;
   if (MD_CHAPTER.test(t)) return { level: 1, text: t.replace(MD_CHAPTER, "").trim() };
   return { level: Math.min(3, Math.max(1, md[1].length - shift)), text: t };
@@ -216,6 +229,17 @@ export function normalizeText(input) {
 
   let inReferences = false;
   let h2Seen = false; // 当前一级标题下是否已有二级标题
+  let lastChapter = 0; // 「1 引言」写法上一个一级标题的编号
+
+  // 「1 引言」只有编号等于上一个 + 1 才算一级标题（第一个必须是 1），降低误判
+  const findHeading = (line) => {
+    const heading = headingOf(line, shift);
+    if (heading) return heading;
+    const numbered = numberedChapter(line);
+    if (!numbered || numbered.n !== lastChapter + 1) return null;
+    lastChapter = numbered.n;
+    return { level: 1, text: numbered.text };
+  };
 
   for (const rawLine of lines) {
     const trim = rawLine.trim();
@@ -277,7 +301,7 @@ export function normalizeText(input) {
 
     if (inReferences) {
       // 遇到一级标题，参考文献区结束
-      const heading = headingOf(trim, shift);
+      const heading = findHeading(trim);
       if (heading?.level === 1) {
         inReferences = false;
         h2Seen = false;
@@ -319,7 +343,7 @@ export function normalizeText(input) {
       continue;
     }
 
-    const heading = headingOf(trim, shift);
+    const heading = findHeading(trim);
     if (heading) {
       let level = heading.level;
       // 前面没有二级标题的三级标题提升为二级，避免编出 1.0.1
